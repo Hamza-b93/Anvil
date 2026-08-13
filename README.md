@@ -40,8 +40,8 @@ back to you, prompts included.
 The easiest path once packaged for Arch will be:
 
 ```bash
-yay -S anvil
-anvil
+yay -S anvil-manager
+anvil-manager
 ```
 
 Until then, install it from source with pip:
@@ -49,16 +49,16 @@ Until then, install it from source with pip:
 ```bash
 cd anvil
 pip install -e .
-anvil
+anvil-manager
 ```
 
-This installs FastAPI and uvicorn plus the `anvil` console script, and
-starts the server on `http://127.0.0.1:8000`, opening automatically in your
-browser.
+This installs FastAPI and uvicorn plus the `anvil-manager` console script,
+and starts the server on `http://127.0.0.1:8000`, opening automatically in
+your browser.
 
 For a no-install dev loop, `./run.sh` sets up a local `venv/`, installs
-Anvil into it in editable mode, and runs `anvil` — useful if you don't want
-to touch your system Python environment.
+Anvil into it in editable mode, and runs `anvil-manager` — useful if you
+don't want to touch your system Python environment.
 
 To stop it, press `Ctrl+C` in the terminal it's running in.
 
@@ -68,7 +68,7 @@ To stop it, press `Ctrl+C` in the terminal it's running in.
 anvil/
 ├── src/anvil/
 │   ├── app.py              FastAPI app — read endpoints + WebSocket actions
-│   ├── cli.py               `anvil` console-script entry point
+│   ├── cli.py               `anvil-manager` console-script entry point
 │   └── frontend/
 │       └── index.html       Tailwind UI, talks to the backend via fetch/WS
 ├── packaging/

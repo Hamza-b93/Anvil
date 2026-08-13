@@ -21,7 +21,7 @@ name = "Muhammad Hamza"
 Homepage = "https://github.com/Hamza-b93/anvil"
 
 [project.scripts]
-anvil = "anvil.cli:run"
+anvil-manager = "anvil.cli:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]

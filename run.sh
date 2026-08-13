@@ -17,4 +17,4 @@ echo "Privileged actions (sync/apply/remove) will prompt via your desktop's polk
 echo "Press Ctrl+C to stop."
 echo ""
 
-exec anvil
+exec anvil-manager
