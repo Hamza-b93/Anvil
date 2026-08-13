@@ -6,6 +6,18 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.5] — 2026-08-14
+
+### Added
+- **Safe exit button.** A new "Exit" button in the header stops the Anvil
+  server itself (not a pacman action) via a new `POST /api/exit`. It
+  refuses with a `409` while any pacman/yay transaction is still running —
+  the frontend also blocks the click client-side — so it can never kill
+  the server out from under a live install/removal. Otherwise it signals
+  its own process to shut down cleanly (closing connections via uvicorn's
+  normal signal handling rather than a hard kill) and the page swaps to a
+  small "Anvil has stopped" screen.
+
 ## [0.7.4] — 2026-08-13
 
 ### Added

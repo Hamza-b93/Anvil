@@ -104,6 +104,12 @@ to the browser line by line as it happens:
 - `/ws/clean_aur_cache` → `yay -Sc` (clears yay's AUR build cache,
   `~/.cache/yay`)
 
+**Shutting down** (`POST /api/exit`) stops the server itself — not a
+pacman action. It refuses (`409`) while any `/ws/...` transaction above is
+still running, so the "Exit" button in the header can't kill Anvil out from
+under a live install; otherwise it signals its own process to shut down
+cleanly.
+
 ### Interactive prompts
 
 All pacman- and yay-facing actions (`sync`, `refresh_keyrings`, `apply`,

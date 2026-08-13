@@ -136,7 +136,7 @@
           </svg>
         </div>
         <span class="font-bold text-[15px] tracking-tight">Anvil</span>
-        <span class="mono text-[10px] text-muted-2">v0.7.0</span>
+        <span class="mono text-[10px] text-muted-2">v0.7.5</span>
       </div>
 
       <div class="flex-1"></div>
@@ -171,6 +171,10 @@
         <span id="conn-dot" class="w-1.5 h-1.5 rounded-full" style="background: var(--muted-2);"></span>
         <span class="mono text-[11px] text-muted-2" id="conn-label">connecting…</span>
       </div>
+      <button id="exit-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-[var(--red)] hover:border-[var(--red)] transition-colors shrink-0" title="Safely stop the Anvil server">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        <span class="hidden sm:inline">Exit</span>
+      </button>
     </div>
 
     <!-- NAV -->
@@ -349,6 +353,14 @@
 </main>
 
 <!-- TERMINAL DRAWER -->
+<div id="exit-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center" style="background: var(--bg);">
+  <div class="flex flex-col items-center gap-3 text-center px-6">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+    <div class="font-semibold text-[15px]">Anvil has stopped</div>
+    <div class="text-[13px] text-muted-2 max-w-sm">The server was shut down safely. You can close this tab, or run <span class="mono">anvil-manager</span> again to start it back up.</div>
+  </div>
+</div>
+
 <div id="drawer" class="drawer-hidden fixed left-0 right-0 bottom-0 glass border-t border-line z-20" style="height: 0px;">
   <div class="max-w-6xl mx-auto">
     <button id="drawer-toggle" class="w-full h-11 flex items-center px-5 gap-3 border-b border-line">
@@ -379,6 +391,7 @@ const state = {
   expandedUpdates: new Set(), // package names with an open detail row
   packageInfoCache: new Map(), // name -> info object | 'loading' | Error
   drawerOpen: false,
+  transactionRunning: false,
   searchDebounce: null,
   // New state for progress tracking
   currentDownloadProgress: {},
@@ -729,6 +742,7 @@ document.getElementById('aur-upgrade-toggle').addEventListener('click', () => {
 // ----------------------------------------------------------------- drawer
 
 function openDrawer(title) {
+  state.transactionRunning = true;
   state.drawerOpen = true;
   state.currentDrawerTitle = title;
   document.getElementById('drawer').classList.remove('drawer-hidden');
@@ -907,7 +921,7 @@ function runSocket(path, payload, onDone) {
     }
   };
   ws.onerror = () => { appendLine('error: websocket connection failed'); setDrawerStatus('error', 'Transaction log — error'); };
-  ws.onclose = () => { onDone && onDone(); };
+  ws.onclose = () => { state.transactionRunning = false; onDone && onDone(); };
   return ws;
 }
 
@@ -1426,6 +1440,30 @@ document.getElementById('graph-root-input').addEventListener('keydown', e => {
   if (name) focusGraph(name);
 });
 document.getElementById('graph-reset-btn').addEventListener('click', resetGraph);
+
+document.getElementById('exit-btn').addEventListener('click', async () => {
+  if (state.transactionRunning) {
+    alert('A transaction is still running — wait for it to finish before exiting.');
+    return;
+  }
+  if (!confirm('Stop the Anvil server? You\'ll need to run anvil-manager again to use it.')) return;
+  const btn = document.getElementById('exit-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/exit', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || 'Could not exit — a transaction may still be running.');
+      btn.disabled = false;
+      return;
+    }
+    document.getElementById('exit-overlay').classList.remove('hidden');
+  } catch (e) {
+    // The server closing its socket right after responding can surface as a
+    // fetch error even though the shutdown itself succeeded.
+    document.getElementById('exit-overlay').classList.remove('hidden');
+  }
+});
 
 // ------------------------------------------------------------------ init
 

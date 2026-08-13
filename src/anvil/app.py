@@ -13,6 +13,8 @@ Read-only endpoints (no privilege needed):
                                   `-Si`, then `yay -Si` for not-yet-installed
                                   AUR packages)
   GET  /api/history      recent transactions, parsed from /var/log/pacman.log
+  POST /api/exit         safely shuts the server down (refuses while a
+                          /ws/* transaction is in flight)
 
 Privileged actions (prompt via polkit's pkexec, never store a password):
   WS   /ws/sync                pkexec pacman -Sy
@@ -43,6 +45,7 @@ import asyncio
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from pathlib import Path
@@ -54,6 +57,11 @@ from fastapi.responses import JSONResponse
 app = FastAPI(title="Anvil")
 
 FRONTEND_DIR = Path(__file__).resolve().parent / "frontend"
+
+# Bumped in stream_process for the lifetime of every /ws/* transaction, so
+# /api/exit can refuse to shut down mid-pacman-run instead of killing the
+# server out from under a live install/removal.
+_active_transactions = 0
 
 
 def run_cmd(cmd: list[str]) -> tuple[int, str, str]:
@@ -364,6 +372,29 @@ def history():
     return {"entries": entries}
 
 
+@app.post("/api/exit")
+async def exit_app():
+    """
+    Shuts the whole server process down — not a pacman action, just Anvil
+    itself exiting. Refuses while any /ws/* transaction is still running so
+    a real pacman/yay process is never orphaned mid-install; otherwise
+    signals its own process with SIGTERM, which uvicorn's default signal
+    handling turns into a clean shutdown (closes connections, then exits).
+    """
+    if _active_transactions > 0:
+        return JSONResponse(
+            {"ok": False, "error": "A transaction is still running — wait for it to finish first."},
+            status_code=409,
+        )
+
+    async def _shutdown():
+        await asyncio.sleep(0.3)  # let the response for this request flush first
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.create_task(_shutdown())
+    return {"ok": True}
+
+
 # ------------------------------------------------------- privileged actions
 
 # Any output pacman/yay leaves sitting without a trailing newline is
@@ -423,6 +454,8 @@ if __name__ == "__main__":
 
 
 async def stream_process(ws: WebSocket, cmd: list[str]):
+    global _active_transactions
+    _active_transactions += 1
     await ws.send_json({"type": "start", "cmd": " ".join(cmd)})
 
     # A single dedicated reader serializes every inbound WebSocket message
@@ -623,6 +656,7 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
         await ws.send_json({"type": "line", "text": f"error: {exc}"})
         await ws.send_json({"type": "done", "returncode": 1})
     finally:
+        _active_transactions -= 1
         reader_task.cancel()
         if askpass_server is not None:
             askpass_server.close()
