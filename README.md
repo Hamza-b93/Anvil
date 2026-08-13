@@ -26,16 +26,11 @@ back to you, prompts included.
   agent). Privileged actions (sync, apply, remove, keyring refresh) run via
   `pkexec`, which will pop your desktop's normal password prompt — Anvil
   never asks for or stores your password itself.
-- **A graphical askpass helper** (optional, but recommended if you use AUR
-  actions): `yay` shells out to plain `sudo` — not `pkexec` — for the final
-  install step of an AUR build. Anvil detects and uses one of
-  `ssh-askpass`, `x11-ssh-askpass`, `lxqt-openssh-askpass`, `ksshaskpass`,
-  or `seahorse-ssh-askpass` if present, so `sudo`'s password prompt appears
-  as a graphical dialog instead of failing outright (see "Interactive
-  prompts" below for why this is needed). KDE Plasma ships `ksshaskpass`;
-  GNOME users can install `seahorse`. `x11-ssh-askpass` installs its
-  binary under `/usr/lib/ssh/` rather than a `PATH` bin directory, so
-  Anvil checks that fixed location too, not just `PATH`.
+- Nothing extra needed for AUR installs: `yay` shells out to plain `sudo` —
+  not `pkexec` — for the final install step of an AUR build, and rather
+  than relying on a system askpass dialog, Anvil supplies its own askpass
+  helper that relays the password prompt into the browser (see
+  "Interactive prompts" below for how).
 
 ## Running it
 
@@ -134,16 +129,21 @@ installation?", a "`pkgA` and `pkgB` are in conflict, remove `pkgB`?", or
 a "Diffs to show?" from yay is something you can actually answer instead
 of a hard failure or a hang.
 
-One prompt this mechanism *can't* see: `yay` shells out to plain `sudo`
-(not `pkexec`) for an AUR build's final install step, and `sudo` writes
-its password prompt directly to `/dev/tty` rather than stdout/stderr,
-bypassing this app's output capture entirely — left alone, that silently
-hangs whatever terminal launched the server. Anvil's subprocesses run
-detached from that controlling terminal (so `sudo` can't reach it) and set
-`SUDO_ASKPASS` to a graphical askpass helper if one is installed, so `sudo`
-prompts through that instead. Without one installed, an AUR action needing
-`sudo` will fail with a clear "no askpass program specified" error in the
-transaction log rather than hanging silently.
+One prompt the mechanism above *can't* see: `yay` shells out to plain
+`sudo` (not `pkexec`) for an AUR build's final install step, and `sudo`
+writes its password prompt directly to `/dev/tty` rather than
+stdout/stderr, bypassing this app's output capture entirely — left alone,
+that silently hangs whatever terminal launched the server. Anvil's
+subprocesses run detached from that controlling terminal (so `sudo` can't
+reach it) and point `SUDO_ASKPASS` at a small helper script Anvil writes
+per-run rather than a system askpass dialog: when `sudo` invokes it, it
+connects back to a Unix socket the server opened just for that
+transaction, the password prompt is relayed into the browser and rendered
+as a masked field in the same transaction drawer, and the typed password
+is written back down that socket for `sudo` to consume. It's never
+written to disk, logged, or echoed into the transaction log — it only ever
+exists in the server's memory and the browser tab for the moment it takes
+to relay it.
 
 ## Why "Apply" always does a full upgrade when any update is checked
 

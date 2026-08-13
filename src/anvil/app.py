@@ -43,6 +43,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -381,45 +382,101 @@ _PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|:)\s*$")
 # bypassing stdout/stderr entirely — our output capture below can never see
 # it, so left alone it just blocks silently on whatever terminal launched
 # this server. start_new_session=True detaches the child from that
-# controlling terminal so sudo can't reach it; if a graphical askpass
-# helper is installed, SUDO_ASKPASS lets sudo prompt through that instead of
-# failing outright.
-_ASKPASS_CANDIDATES = (
-    "ssh-askpass",
-    "x11-ssh-askpass",
-    "lxqt-openssh-askpass",
-    "ksshaskpass",
-    "seahorse-ssh-askpass",
-)
+# controlling terminal so sudo can't reach it. Rather than pointing
+# SUDO_ASKPASS at a system askpass dialog (ssh-askpass's UI hasn't changed
+# since the 90s), Anvil supplies its own tiny askpass script: sudo invokes
+# it, it connects back to a Unix socket this process opens just for the
+# run, we relay the password prompt to the browser over the same WebSocket
+# used for pacman's Yes/No prompts, and the typed password is written back
+# down that socket for the script to hand to sudo. The password only ever
+# exists in this process's memory and the browser tab — never on disk,
+# never in argv/env of any process ps could see.
+_ASKPASS_SCRIPT = """#!/usr/bin/env python3
+import os, socket, sys
 
-# Arch's x11-ssh-askpass package installs its binaries under /usr/lib/ssh/
-# (matching OpenSSH's own SSH_ASKPASS fallback convention) rather than a
-# PATH bin directory, so a plain `shutil.which` lookup misses it even when
-# it's installed — check these fixed locations too.
-_ASKPASS_EXTRA_PATHS = (
-    "/usr/lib/ssh/ssh-askpass",
-    "/usr/lib/ssh/x11-ssh-askpass",
-)
+def main():
+    sock_path = os.environ.get("ANVIL_ASKPASS_SOCK")
+    if not sock_path:
+        sys.exit(1)
+    prompt = sys.argv[1] if len(sys.argv) > 1 else "Password:"
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(5)
+        s.connect(sock_path)
+        s.settimeout(None)
+        s.sendall(prompt.encode() + b"\\n")
+        buf = b""
+        while not buf.endswith(b"\\n"):
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        sys.stdout.write(buf.decode(errors="ignore").rstrip("\\n"))
+        sys.stdout.flush()
+    except OSError:
+        sys.exit(1)
 
-
-def _find_askpass() -> str | None:
-    for name in _ASKPASS_CANDIDATES:
-        path = shutil.which(name)
-        if path:
-            return path
-    for path in _ASKPASS_EXTRA_PATHS:
-        if os.access(path, os.X_OK):
-            return path
-    return None
+if __name__ == "__main__":
+    main()
+"""
 
 
 async def stream_process(ws: WebSocket, cmd: list[str]):
     await ws.send_json({"type": "start", "cmd": " ".join(cmd)})
+
+    # A single dedicated reader serializes every inbound WebSocket message
+    # into one queue, so the two things that can ask the browser a question
+    # here — a pacman/yay text prompt, and a sudo password request relayed
+    # via the askpass socket below — never race each other calling
+    # ws.receive_json() concurrently on the same connection.
+    answer_queue: asyncio.Queue = asyncio.Queue()
+
+    async def ws_reader():
+        try:
+            while True:
+                answer_queue.put_nowait(await ws.receive_json())
+        except WebSocketDisconnect:
+            answer_queue.put_nowait(None)
+
+    reader_task = asyncio.create_task(ws_reader())
+
+    async def get_answer() -> dict:
+        msg = await answer_queue.get()
+        if msg is None:
+            raise WebSocketDisconnect()
+        return msg
+
+    askpass_dir: str | None = None
+    askpass_server = None
     try:
         env = os.environ.copy()
-        askpass = _find_askpass()
-        if askpass:
-            env["SUDO_ASKPASS"] = askpass
+
+        # Only yay's own internal `sudo` call needs an askpass helper —
+        # pkexec-based commands never consult SUDO_ASKPASS.
+        if cmd and cmd[0] == "yay":
+            askpass_dir = tempfile.mkdtemp(prefix="anvil-askpass-")
+            os.chmod(askpass_dir, 0o700)
+            script_path = os.path.join(askpass_dir, "askpass.py")
+            with open(script_path, "w") as f:
+                f.write(_ASKPASS_SCRIPT)
+            os.chmod(script_path, 0o700)
+            sock_path = os.path.join(askpass_dir, "askpass.sock")
+
+            async def handle_askpass_conn(reader, writer):
+                try:
+                    prompt_line = await reader.readline()
+                    prompt = prompt_line.decode(errors="ignore").strip() or "Password required for sudo"
+                    await ws.send_json({"type": "password_prompt", "text": prompt})
+                    reply = await get_answer()
+                    password = reply.get("answer") or ""
+                    writer.write(password.encode() + b"\n")
+                    await writer.drain()
+                finally:
+                    writer.close()
+
+            askpass_server = await asyncio.start_unix_server(handle_askpass_conn, path=sock_path)
+            env["SUDO_ASKPASS"] = script_path
+            env["ANVIL_ASKPASS_SOCK"] = sock_path
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -535,7 +592,7 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                 buffer = b""
                 await ws.send_json({"type": "prompt", "text": prompt_text})
                 try:
-                    reply = await ws.receive_json()
+                    reply = await get_answer()
                 except WebSocketDisconnect:
                     proc.kill()
                     await proc.wait()
@@ -564,6 +621,12 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI
         await ws.send_json({"type": "line", "text": f"error: {exc}"})
         await ws.send_json({"type": "done", "returncode": 1})
+    finally:
+        reader_task.cancel()
+        if askpass_server is not None:
+            askpass_server.close()
+        if askpass_dir is not None:
+            shutil.rmtree(askpass_dir, ignore_errors=True)
 
 
 @app.websocket("/ws/sync")

@@ -6,6 +6,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.3] — 2026-08-13
+
+### Changed
+- **AUR install password prompt now appears in the browser.** `yay`'s
+  internal `sudo` call for an AUR build's final install step used to
+  require a system askpass dialog (`ssh-askpass`, `ksshaskpass`, etc.) to
+  avoid hanging the launching terminal. Anvil now supplies its own askpass
+  helper script per run: it connects back to a Unix socket the server
+  opens just for that transaction, relaying the password prompt into the
+  same transaction drawer used for pacman's other prompts as a masked
+  field, with the typed password written straight back down the socket.
+  Nothing is written to disk, logged, or echoed into the transaction log —
+  no system askpass helper needs to be installed anymore.
+
 ## [0.7.2] — 2026-08-13
 
 ### Added

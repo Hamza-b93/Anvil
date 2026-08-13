@@ -747,6 +747,34 @@ function appendPrompt(text, onAnswer) {
   out.scrollTop = out.scrollHeight;
 }
 
+// sudo (invoked internally by yay for an AUR build's final install step)
+// is blocked on its askpass helper, which is waiting on us. Show a masked
+// field and hand the typed password to onAnswer — unlike appendPrompt, the
+// entered value is never echoed back into the transaction log.
+function appendPasswordPrompt(text, onAnswer) {
+  const out = document.getElementById('terminal-output');
+  const wrap = document.createElement('div');
+  wrap.className = 'term-line rounded-lg px-3 py-3 my-1';
+  wrap.style.background = 'var(--purple-dim)';
+  wrap.style.border = '1px solid var(--purple)';
+  const safeText = escapeHtml(text);
+  wrap.innerHTML = `
+    <div class="mono text-[12.5px]">${safeText}</div>
+    <div class="flex items-center gap-2 mt-2.5">
+      <input type="password" autocomplete="off" class="password-prompt-input mono text-[12px] surface-2 border border-line rounded-lg px-2.5 py-1.5 w-56" placeholder="password, Enter to send">
+    </div>`;
+  out.appendChild(wrap);
+  const input = wrap.querySelector('.password-prompt-input');
+  input.focus();
+  input.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const value = input.value;
+    wrap.innerHTML = `<div class="mono text-[12.5px]">${safeText}<span class="font-semibold" style="color: var(--purple);"> → (password submitted)</span></div>`;
+    onAnswer(value);
+  });
+  out.scrollTop = out.scrollHeight;
+}
+
 // NEW: Function to update progress display in the drawer
 function updateProgressDisplay() {
     const out = document.getElementById('terminal-output');
@@ -800,6 +828,12 @@ function runSocket(path, payload, onDone) {
     } else if (msg.type === 'prompt') {
       setDrawerStatus('waiting', 'Transaction log — waiting for your input');
       appendPrompt(msg.text, answer => {
+        ws.send(JSON.stringify({ answer }));
+        setDrawerStatus('running', state.currentDrawerTitle || 'Transaction log — running…');
+      });
+    } else if (msg.type === 'password_prompt') {
+      setDrawerStatus('waiting', 'Transaction log — waiting for your password');
+      appendPasswordPrompt(msg.text, answer => {
         ws.send(JSON.stringify({ answer }));
         setDrawerStatus('running', state.currentDrawerTitle || 'Transaction log — running…');
       });
