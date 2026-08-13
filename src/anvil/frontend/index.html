@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anvil — Package Manager</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0A0E14;
+    --bg-2: #0D1219;
+    --surface: #10151D;
+    --surface-2: #171E29;
+    --surface-3: #1F2836;
+    --border: #232C3B;
+    --border-soft: #1A222E;
+    --text: #EDF1F7;
+    --muted: #8794A8;
+    --muted-2: #52607A;
+    --accent: #5EB0F0;
+    --accent-2: #7C9CF0;
+    --accent-dim: #2E4A66;
+    --amber: #EFAE4E;
+    --amber-dim: #4A3B1F;
+    --green: #5FD08A;
+    --green-dim: #1F3A2C;
+    --red: #F0776D;
+    --red-dim: #4A2422;
+    --purple: #C77BC0;
+    --purple-dim: #4A2E45;
+  }
+  * { font-family: 'Inter', sans-serif; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  html, body { background: var(--bg); color: var(--text); }
+  body {
+    background:
+      radial-gradient(1200px 500px at 50% -10%, rgba(94,176,240,0.10), transparent 60%),
+      radial-gradient(900px 500px at 90% 10%, rgba(124,156,240,0.06), transparent 60%),
+      var(--bg);
+  }
+  .surface { background: linear-gradient(180deg, var(--surface), var(--bg-2)); }
+  .surface-2 { background: var(--surface-2); }
+  .surface-3 { background: var(--surface-3); }
+  .surface-flat { background: var(--surface); }
+  .border-line { border-color: var(--border); }
+  .text-muted { color: var(--muted); }
+  .text-muted-2 { color: var(--muted-2); }
+  .accent { color: var(--accent); }
+  .bg-accent { background: var(--accent); }
+  .card { border: 1px solid var(--border); box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 8px 24px -12px rgba(0,0,0,0.5); }
+  .card-hover { transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease; }
+  .card-hover:hover { border-color: var(--border-soft); transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 16px 32px -14px rgba(0,0,0,0.6); }
+  .glass { backdrop-filter: blur(14px) saturate(140%); background: rgba(10,14,20,0.72); }
+  .term-line { opacity: 0; animation: fadeIn 0.15s ease forwards; }
+  @keyframes fadeIn { to { opacity: 1; } }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
+  .pkg-row { transition: background 0.12s ease; border-bottom: 1px solid var(--border-soft); }
+  .pkg-row:last-child { border-bottom: none; }
+  .pkg-row:hover { background: var(--surface-2); }
+  .drawer-hidden {
+    height: 0px !important;
+    opacity: 0;
+    visibility: hidden;
+    transition: height 0.3s ease, opacity 0.2s ease, visibility 0.2s ease;
+  }
+  .drawer-open {
+    height: 360px !important;
+    opacity: 1;
+    visibility: visible;
+  }
+  .nav-item { transition: all 0.15s ease; position: relative; }
+  .nav-item.active { background: var(--surface-2); color: var(--text); box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset; }
+  .nav-item:not(.active):hover { background: rgba(255,255,255,0.03); color: var(--text); }
+  .fade-view { animation: viewIn 0.25s ease; }
+  @keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  input:focus { outline: none; }
+  .checkbox-custom { appearance: none; width: 17px; height: 17px; border: 1.5px solid var(--muted-2); border-radius: 5px; cursor: pointer; position: relative; flex-shrink: 0; transition: all 0.12s ease; }
+  .checkbox-custom:hover { border-color: var(--accent); }
+  .checkbox-custom:disabled { opacity: 0.35; cursor: not-allowed; }
+  .checkbox-custom:checked { background: var(--accent); border-color: var(--accent); }
+  .checkbox-custom:checked::after { content: '✓'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #05131F; font-weight: 700; }
+  .glow-pulse { animation: pulseGlow 2s ease-in-out infinite; }
+  @keyframes pulseGlow { 0%,100% { box-shadow: 0 0 0 0 rgba(87,166,232,0.25); } 50% { box-shadow: 0 0 0 6px rgba(87,166,232,0); } }
+  .spin { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .btn-primary { background: linear-gradient(180deg, var(--accent), var(--accent-2)); box-shadow: 0 6px 16px -6px rgba(94,176,240,0.5); }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 8px 20px -6px rgba(94,176,240,0.65); }
+  .stat-icon { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; }
+
+  /* Progress Bar Styles */
+  .progress-container { width: 100%; background-color: var(--surface-3); border-radius: 4px; margin-top: 4px; overflow: hidden; }
+  .progress-bar { height: 8px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 4px; transition: width 0.3s ease; }
+  .progress-text { font-size: 11px; color: var(--muted-2); margin-top: 2px; }
+</style>
+</head>
+<body class="h-screen overflow-hidden text-[14px] flex flex-col">
+
+<!-- TOPBAR -->
+<header class="glass border-b border-line shrink-0 sticky top-0 z-30">
+  <div class="max-w-6xl mx-auto px-6">
+    <div class="h-16 flex items-center gap-3">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: linear-gradient(160deg, var(--accent-dim), var(--surface-3));">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" class="accent">
+            <path d="M12 2L3 7V17L12 22L21 17V7L12 2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M12 2V22M3 7L12 12M21 7L12 12" stroke="currentColor" stroke-width="1.2" opacity="0.5"/>
+          </svg>
+        </div>
+        <span class="font-bold text-[15px] tracking-tight">Anvil</span>
+        <span class="mono text-[10px] text-muted-2">v0.6.0</span>
+      </div>
+
+      <div class="flex-1"></div>
+
+      <div class="relative w-full max-w-sm hidden md:block">
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-2" width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="search-input" type="text" placeholder="Search packages…" class="w-full surface-2 border border-line rounded-lg pl-9 pr-3 py-2 text-[13px] placeholder:text-muted-2 focus:border-[var(--accent)] transition-colors">
+      </div>
+
+      <button id="refresh-keyring-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0" title="Refresh pacman keyring (pacman-key --refresh-keys, then re-sync archlinux-keyring)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="keyring-icon"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        <span class="hidden sm:inline">Refresh keyring</span>
+      </button>
+      <button id="sync-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" id="sync-icon"><path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 3v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="hidden sm:inline">Sync databases</span>
+      </button>
+      <button id="apply-btn" class="btn-primary flex items-center gap-2 px-4 py-2 rounded-lg text-[#05131F] text-[12px] font-semibold transition-all disabled:opacity-30 disabled:pointer-events-none disabled:shadow-none shrink-0" disabled>
+        Apply
+        <span id="apply-count" class="mono text-[10px] bg-[#05131F]/20 px-1.5 py-0.5 rounded hidden">0</span>
+      </button>
+
+      <div class="items-center gap-2 pl-3 ml-1 border-l border-line hidden lg:flex shrink-0">
+        <span id="conn-dot" class="w-1.5 h-1.5 rounded-full" style="background: var(--muted-2);"></span>
+        <span class="mono text-[11px] text-muted-2" id="conn-label">connecting…</span>
+      </div>
+    </div>
+
+    <!-- NAV -->
+    <nav class="flex items-center gap-1 pb-3 -mt-0.5 overflow-x-auto">
+      <button data-view="dashboard" class="nav-item active flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-left text-muted text-[13px] font-medium whitespace-nowrap">
+        <span>Dashboard</span>
+      </button>
+      <button data-view="updates" class="nav-item flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-left text-muted text-[13px] font-medium whitespace-nowrap">
+        <span>Updates</span>
+        <span id="updates-badge" class="mono text-[10px] px-1.5 py-0.5 rounded hidden" style="background: var(--amber-dim); color: var(--amber);">0</span>
+        <span id="aur-updates-badge" class="mono text-[10px] px-1.5 py-0.5 rounded hidden" style="background: var(--purple-dim); color: var(--purple);">0</span>
+      </button>
+      <button data-view="search" class="nav-item flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-left text-muted text-[13px] font-medium whitespace-nowrap">
+        <span>Install packages</span>
+      </button>
+      <button data-view="installed" class="nav-item flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-left text-muted text-[13px] font-medium whitespace-nowrap">
+        <span>Installed</span>
+      </button>
+      <button data-view="history" class="nav-item flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-left text-muted text-[13px] font-medium whitespace-nowrap">
+        <span>History</span>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<!-- MAIN -->
+<main class="flex-1 overflow-y-auto">
+  <div class="max-w-6xl mx-auto px-6 py-10 pb-24">
+
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="fade-view">
+        <div class="mb-8">
+          <h1 class="text-2xl font-bold tracking-tight">System overview</h1>
+          <p class="text-muted text-[13.5px] mt-1.5">Live from pacman on this machine.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+          <div class="surface card card-hover rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-[11px] text-muted-2 uppercase tracking-wide font-medium">Updates available</span>
+              <span class="stat-icon" style="background: var(--amber-dim); color: var(--amber);">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 8v5m0 3.5h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+              </span>
+            </div>
+            <div class="mono text-3xl font-semibold" id="stat-updates">–</div>
+            <div class="text-[12.5px] text-muted mt-1.5">pending in sync DB</div>
+          </div>
+          <div class="surface card card-hover rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-[11px] text-muted-2 uppercase tracking-wide font-medium">Installed packages</span>
+              <span class="stat-icon" style="background: var(--accent-dim); color: var(--accent);">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 7L12 3L4 7M20 7L12 11M20 7V17L12 21M12 11L4 7M12 11V21M4 7V17L12 21" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+              </span>
+            </div>
+            <div class="mono text-3xl font-semibold" id="stat-installed">–</div>
+            <div class="text-[12.5px] text-muted mt-1.5"><span id="stat-explicit">–</span> explicit · rest deps</div>
+          </div>
+          <div class="surface card card-hover rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-[11px] text-muted-2 uppercase tracking-wide font-medium">Orphaned packages</span>
+              <span class="stat-icon" style="background: var(--red-dim); color: var(--red);">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+              </span>
+            </div>
+            <div class="mono text-3xl font-semibold" id="stat-orphans">–</div>
+            <div class="text-[12.5px] text-muted mt-1.5">no longer required</div>
+          </div>
+        </div>
+
+        <div class="surface card rounded-2xl overflow-hidden">
+          <div class="px-5 py-4 border-b border-line flex items-center justify-between">
+            <span class="text-[13.5px] font-semibold">Ready to upgrade</span>
+            <button data-view-link="updates" class="text-[12px] accent hover:underline font-medium">View all →</button>
+          </div>
+          <div id="dash-preview">
+            <div class="px-5 py-10 text-center text-muted text-[13px]">Loading…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- UPDATES -->
+      <section id="view-updates" class="fade-view hidden">
+        <div class="mb-2">
+          <h1 class="text-2xl font-bold tracking-tight">Updates</h1>
+          <p class="text-muted text-[13.5px] mt-1.5" id="updates-subtitle">Loading…</p>
+          <p class="text-muted text-[13.5px] mt-0.5" id="aur-updates-subtitle">Loading AUR…</p>
+        </div>
+        <p class="text-[12px] text-muted-2 mb-6">Arch doesn't support upgrading a subset of packages safely, so updates can't be picked individually — each section below is upgraded all together or not at all.</p>
+
+        <!-- Repo Updates Section -->
+        <div class="mb-6">
+          <div class="flex items-center justify-between gap-3 px-1 mb-2.5">
+            <div class="flex items-center gap-2">
+               <span class="w-1.5 h-1.5 rounded-full" style="background: var(--amber);"></span>
+               <span class="text-[12px] font-semibold uppercase tracking-wide" style="color: var(--amber);">Repository Updates</span>
+            </div>
+            <button id="repo-upgrade-toggle" class="upgrade-toggle-btn text-[12px] font-medium px-3 py-1.5 rounded-lg border transition-colors"></button>
+          </div>
+          <div class="surface card rounded-2xl overflow-hidden" id="updates-list"></div>
+        </div>
+
+        <!-- AUR Updates Section -->
+        <div>
+          <div class="flex items-center justify-between gap-3 px-1 mb-2.5">
+            <div class="flex items-center gap-2">
+               <span class="w-1.5 h-1.5 rounded-full" style="background: var(--purple);"></span>
+               <span class="text-[12px] font-semibold uppercase tracking-wide" style="color: var(--purple);">AUR Updates</span>
+            </div>
+            <button id="aur-upgrade-toggle" class="upgrade-toggle-btn text-[12px] font-medium px-3 py-1.5 rounded-lg border transition-colors"></button>
+          </div>
+          <div class="surface card rounded-2xl overflow-hidden" id="aur-updates-list"></div>
+        </div>
+
+      </section>
+
+      <!-- SEARCH / INSTALL -->
+      <section id="view-search" class="fade-view hidden">
+        <div class="mb-6">
+          <h1 class="text-2xl font-bold tracking-tight">Install packages</h1>
+          <p class="text-muted text-[13.5px] mt-1.5">Search official repos (pacman -Ss) and AUR (yay -Ss). Type to search.</p>
+        </div>
+        <div class="surface card rounded-2xl overflow-hidden" id="search-results">
+          <div class="px-5 py-12 text-center text-muted text-[13px]">Start typing to search…</div>
+        </div>
+      </section>
+
+      <!-- INSTALLED -->
+      <section id="view-installed" class="fade-view hidden">
+        <div class="mb-6">
+          <h1 class="text-2xl font-bold tracking-tight">Installed</h1>
+          <p class="text-muted text-[13.5px] mt-1.5" id="installed-subtitle">Loading…</p>
+        </div>
+        <div class="surface card rounded-2xl overflow-hidden" id="installed-list"></div>
+      </section>
+
+      <!-- HISTORY -->
+      <section id="view-history" class="fade-view hidden">
+        <div class="mb-6">
+          <h1 class="text-2xl font-bold tracking-tight">Transaction history</h1>
+          <p class="text-muted text-[13.5px] mt-1.5">Parsed from /var/log/pacman.log.</p>
+        </div>
+        <div class="space-y-2.5" id="history-list"></div>
+      </section>
+
+  </div>
+</main>
+
+<!-- TERMINAL DRAWER -->
+<div id="drawer" class="drawer-hidden fixed left-0 right-0 bottom-0 glass border-t border-line z-20" style="height: 0px;">
+  <div class="max-w-6xl mx-auto">
+    <button id="drawer-toggle" class="w-full h-11 flex items-center px-5 gap-3 border-b border-line">
+      <span id="drawer-status-dot" class="w-2 h-2 rounded-full shrink-0" style="background: var(--muted-2);"></span>
+      <span class="mono text-[12px] text-muted" id="drawer-title">Transaction log — idle</span>
+      <span class="flex-1"></span>
+      <svg id="drawer-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" class="text-muted-2 transition-transform"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="p-4 overflow-y-auto mono text-[12.5px] leading-relaxed" style="height: 296px;" id="terminal-output">
+      <!-- Progress information will be displayed here dynamically -->
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+const WS = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+
+const state = {
+  view: 'dashboard',
+  selectedInstall: new Set(), // For repo packages
+  selectedAurInstall: new Set(), // For AUR packages
+  anyUpdateSelected: false, // For repo updates
+  anyAurUpdateSelected: false, // For AUR updates
+  updates: [], // Repo updates
+  aurUpdates: [], // AUR updates
+  drawerOpen: false,
+  searchDebounce: null,
+  // New state for progress tracking
+  currentDownloadProgress: {},
+  currentInstallProgress: {}
+};
+
+// ------------------------------------------------------------- fetch helpers
+
+async function getJSON(url) {
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+// ------------------------------------------------------------------ loaders
+
+async function loadStatus() {
+  try {
+    const s = await getJSON('/api/status');
+    document.getElementById('stat-installed').textContent = s.installed_total ?? '–';
+    document.getElementById('stat-explicit').textContent = s.installed_explicit ?? '–';
+    document.getElementById('stat-orphans').textContent = s.orphans ?? '–';
+    setConn(true);
+  } catch (e) {
+    setConn(false);
+  }
+}
+
+async function loadUpdates() {
+  const listEl = document.getElementById('updates-list');
+  const subtitle = document.getElementById('updates-subtitle');
+  const badge = document.getElementById('updates-badge');
+  
+  // Load AUR updates as well
+  const aurListEl = document.getElementById('aur-updates-list');
+  const aurSubtitle = document.getElementById('aur-updates-subtitle');
+  const aurBadge = document.getElementById('aur-updates-badge');
+
+  try {
+    // Load repo updates
+    const data = await getJSON('/api/updates');
+    state.updates = data.updates || [];
+    const repoUpdateCount = state.updates.filter(u => u.source === 'repo').length; // Filter for repo
+    document.getElementById('stat-updates').textContent = repoUpdateCount;
+    subtitle.textContent = `${repoUpdateCount} repository package${repoUpdateCount === 1 ? '' : 's'} pending`;
+    if (repoUpdateCount) {
+      badge.textContent = repoUpdateCount;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+
+    // Load AUR updates
+    const aurData = await getJSON('/api/aur_updates');
+    state.aurUpdates = aurData.updates || [];
+    const aurUpdateCount = state.aurUpdates.length; // All from AUR
+    aurSubtitle.textContent = `${aurUpdateCount} AUR package${aurUpdateCount === 1 ? '' : 's'} pending`;
+    if (aurUpdateCount) {
+      aurBadge.textContent = aurUpdateCount;
+      aurBadge.classList.remove('hidden');
+    } else {
+      aurBadge.classList.add('hidden');
+    }
+    
+    renderUpdates();
+  } catch (e) {
+    listEl.innerHTML = `<div class="px-5 py-6 text-[13px]" style="color: var(--red);">${escapeHtml(e.message)}</div>`;
+    subtitle.textContent = 'Could not load updates';
+    aurListEl.innerHTML = `<div class="px-5 py-6 text-[13px]" style="color: var(--red);">${escapeHtml(e.message)}</div>`;
+    aurSubtitle.textContent = 'Could not load AUR updates';
+  }
+}
+
+async function loadInstalled() {
+  const listEl = document.getElementById('installed-list');
+  const subtitle = document.getElementById('installed-subtitle');
+  try {
+    const data = await getJSON('/api/installed');
+    const results = data.results || [];
+    const explicit = results.filter(p => p.explicit).length;
+    subtitle.textContent = `${results.length} packages · ${explicit} explicitly installed`;
+    listEl.innerHTML = results.map(p => `
+      <div class="pkg-row flex items-center gap-3 px-5 py-3.5">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-medium text-[13px]">${escapeHtml(p.name)}</span>
+            ${p.explicit ? '' : `<span class="mono text-[10px] text-muted-2">dependency</span>`}
+          </div>
+          <div class="mono text-[11px] text-muted-2 mt-0.5">${escapeHtml(p.version)}</div>
+        </div>
+        <button class="remove-btn text-[11px] px-2.5 py-1.5 rounded-lg surface-3 border border-line text-muted shrink-0 hover:text-[var(--red)] hover:border-[var(--red-dim)] transition-colors" data-name="${escapeHtml(p.name)}">Remove</button>
+      </div>`).join('');
+    document.querySelectorAll('.remove-btn').forEach(btn => {
+      btn.addEventListener('click', () => removePackage(btn.dataset.name));
+    });
+  } catch (e) {
+    listEl.innerHTML = `<div class="px-5 py-6 text-[13px]" style="color: var(--red);">${escapeHtml(e.message)}</div>`;
+    subtitle.textContent = 'Could not load installed packages';
+  }
+}
+
+async function loadHistory() {
+  const el = document.getElementById('history-list');
+  try {
+    const data = await getJSON('/api/history');
+    const entries = data.entries || [];
+    if (!entries.length) {
+      el.innerHTML = `<div class="text-muted text-[13px] px-1 py-4">No transaction history found.</div>`;
+      return;
+    }
+    const actionColor = { installed: 'var(--green)', upgraded: 'var(--accent)', removed: 'var(--red)', reinstalled: 'var(--amber)' };
+    el.innerHTML = entries.map(h => `
+      <div class="surface card card-hover rounded-2xl px-5 py-3.5 flex items-center gap-3">
+        <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background: ${actionColor[h.action] || 'var(--muted-2)'};"></span>
+        <div class="flex-1 min-w-0">
+          <div class="text-[13px] font-medium">${escapeHtml(h.name)} <span class="mono text-muted-2 font-normal">${escapeHtml(h.version)}</span></div>
+          <div class="mono text-[11px] text-muted-2 mt-0.5">${escapeHtml(h.date)}</div>
+        </div>
+        <span class="mono text-[10px] px-2 py-1 rounded-md surface-3 text-muted-2 capitalize shrink-0">${escapeHtml(h.action)}</span>
+      </div>`).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="text-[13px]" style="color: var(--red);">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function doSearch(q) {
+  const el = document.getElementById('search-results');
+  if (!q) {
+    el.innerHTML = `<div class="px-5 py-10 text-center text-muted text-[13px]">Start typing to search…</div>`;
+    return;
+  }
+  try {
+    // Get both repo and AUR results
+    const [repoData, aurData] = await Promise.all([
+        getJSON('/api/search?q=' + encodeURIComponent(q)),
+        getJSON('/api/aur_search?q=' + encodeURIComponent(q))
+    ]);
+    
+    const repoResults = repoData.results || [];
+    const aurResults = aurData.results || [];
+    const allResults = [...repoResults, ...aurResults]; // Combine results
+
+    if (!allResults.length) {
+      el.innerHTML = `<div class="px-5 py-12 text-center text-muted text-[13px]">No packages match "${escapeHtml(q)}" in repos or AUR.</div>`;
+      return;
+    }
+    
+    // Sort or group results if desired, for now just combine
+    el.innerHTML = allResults.map(p => {
+        // Differentiate styling based on source
+        const sourceTag = p.source === 'aur' ? `<span class="mono text-[10px] px-1.5 py-0.5 rounded" style="background: var(--purple-dim); color: var(--purple);">AUR</span>` : 
+                           `<span class="mono text-[10px] px-1.5 py-0.5 rounded surface-3 text-muted-2">${escapeHtml(p.repo)}</span>`;
+        const checkboxClass = p.source === 'aur' ? 'aur-install-cb' : 'install-cb';
+        const checkboxName = p.source === 'aur' ? `data-aur-name="${escapeHtml(p.name)}"` : `data-name="${escapeHtml(p.name)}"`;
+        
+        return `
+      <div class="pkg-row flex items-center gap-3 px-5 py-3.5">
+        <input type="checkbox" class="checkbox-custom ${checkboxClass}" ${checkboxName} ${state.selectedInstall.has(p.name) || state.selectedAurInstall.has(p.name) ? 'checked' : ''} ${p.installed ? 'disabled' : ''}>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-medium text-[13px]">${escapeHtml(p.name)}</span>
+            ${sourceTag}
+            ${p.installed ? `<span class="mono text-[10px] px-1.5 py-0.5 rounded" style="background: var(--amber-dim); color: var(--amber);">installed</span>` : ''}
+          </div>
+          <div class="text-[12px] text-muted mt-0.5 truncate">${escapeHtml(p.description || '')}</div>
+        </div>
+        <div class="mono text-[11px] text-muted-2 shrink-0">${escapeHtml(p.version)}</div>
+      </div>`;
+    }).join('');
+    
+    // Add event listeners for repo checkboxes
+    document.querySelectorAll('.install-cb').forEach(cb => {
+      cb.addEventListener('change', e => {
+        const n = e.target.dataset.name;
+        e.target.checked ? state.selectedInstall.add(n) : state.selectedInstall.delete(n);
+        syncApplyButton();
+      });
+    });
+    
+    // Add event listeners for AUR checkboxes
+    document.querySelectorAll('.aur-install-cb').forEach(cb => {
+      cb.addEventListener('change', e => {
+        const n = e.target.dataset.aurName; // Note the camelCase for dataset
+        e.target.checked ? state.selectedAurInstall.add(n) : state.selectedAurInstall.delete(n);
+        syncApplyButton();
+      });
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="px-5 py-6 text-[13px]" style="color: var(--red);">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ------------------------------------------------------------------ render
+
+function renderUpgradeToggle(btn, count, selected) {
+  if (!count) {
+    btn.textContent = 'Nothing to upgrade';
+    btn.disabled = true;
+    btn.className = 'upgrade-toggle-btn text-[12px] font-medium px-3 py-1.5 rounded-lg border border-line text-muted-2 opacity-50 cursor-not-allowed';
+    return;
+  }
+  btn.disabled = false;
+  if (selected) {
+    btn.textContent = `✓ Upgrading all ${count}`;
+    btn.className = 'upgrade-toggle-btn text-[12px] font-medium px-3 py-1.5 rounded-lg border transition-colors';
+    btn.style.background = 'var(--accent-dim)';
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.color = 'var(--accent)';
+  } else {
+    btn.textContent = `Upgrade all ${count}`;
+    btn.className = 'upgrade-toggle-btn text-[12px] font-medium px-3 py-1.5 rounded-lg border border-line text-muted hover:text-text transition-colors';
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+  }
+}
+
+function renderUpdates() {
+  const el = document.getElementById('updates-list');
+  const aurEl = document.getElementById('aur-updates-list');
+
+  // Render Repo Updates
+  const repoUpdates = state.updates.filter(u => u.source === 'repo');
+  if (!repoUpdates.length) {
+    el.innerHTML = `<div class="px-5 py-10 text-center text-muted text-[13px]">No repository updates available.</div>`;
+  } else {
+    el.innerHTML = repoUpdates.map(u => `
+    <div class="pkg-row flex items-center gap-3 px-5 py-3.5">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="font-medium text-[13px]">${escapeHtml(u.name)}</span>
+          <span class="mono text-[10px] text-muted-2">${escapeHtml(u.old_version)} <span class="accent">→</span> ${escapeHtml(u.new_version)}</span>
+        </div>
+      </div>
+    </div>`).join('');
+  }
+  renderUpgradeToggle(document.getElementById('repo-upgrade-toggle'), repoUpdates.length, state.anyUpdateSelected);
+
+  // Render AUR Updates
+  if (!state.aurUpdates.length) {
+    aurEl.innerHTML = `<div class="px-5 py-10 text-center text-muted text-[13px]">No AUR updates available.</div>`;
+  } else {
+    aurEl.innerHTML = state.aurUpdates.map(u => `
+    <div class="pkg-row flex items-center gap-3 px-5 py-3.5">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="font-medium text-[13px]">${escapeHtml(u.name)}</span>
+          <span class="mono text-[10px] text-muted-2">${escapeHtml(u.old_version)} <span class="accent">→</span> ${escapeHtml(u.new_version)}</span>
+        </div>
+      </div>
+    </div>`).join('');
+  }
+  renderUpgradeToggle(document.getElementById('aur-upgrade-toggle'), state.aurUpdates.length, state.anyAurUpdateSelected);
+
+  // Update dashboard preview - show both repo and aur updates
+  const dashPreviewEl = document.getElementById('dash-preview');
+  const allUpdates = [...state.updates, ...state.aurUpdates];
+  if (!allUpdates.length) {
+    dashPreviewEl.innerHTML = `<div class="px-5 py-10 text-center text-muted text-[13px]">System is up to date.</div>`;
+  } else {
+     dashPreviewEl.innerHTML = allUpdates.slice(0, 6).map(u => `
+    <div class="pkg-row flex items-center justify-between px-5 py-3">
+      <span class="font-medium text-[13px]">${escapeHtml(u.name)}</span>
+      <span class="mono text-[11px] text-muted-2">${escapeHtml(u.old_version)} <span class="accent">→</span> ${escapeHtml(u.new_version)}</span>
+    </div>`).join('');
+  }
+}
+
+function syncApplyButton() {
+  const total = (state.anyUpdateSelected ? 1 : 0) + (state.anyAurUpdateSelected ? 1 : 0) + state.selectedInstall.size + state.selectedAurInstall.size;
+  const btn = document.getElementById('apply-btn');
+  const badge = document.getElementById('apply-count');
+  btn.disabled = total === 0;
+  if (total > 0) {
+    badge.classList.remove('hidden');
+    // Create a more descriptive label for the badge
+    let badgeTextParts = [];
+    if (state.anyUpdateSelected) badgeTextParts.push("sys upgrade");
+    if (state.anyAurUpdateSelected) badgeTextParts.push("AUR upgrade");
+    if (state.selectedInstall.size) badgeTextParts.push(`+${state.selectedInstall.size} repo`);
+    if (state.selectedAurInstall.size) badgeTextParts.push(`+${state.selectedAurInstall.size} AUR`);
+    
+    badge.textContent = badgeTextParts.join(", ");
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+function setConn(ok) {
+  document.getElementById('conn-dot').style.background = ok ? 'var(--green)' : 'var(--red)';
+  document.getElementById('conn-label').textContent = ok ? 'connected' : 'unreachable';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// -------------------------------------------------------------------- nav
+
+function switchView(view) {
+  state.view = view;
+  document.querySelectorAll('main section').forEach(s => s.classList.add('hidden'));
+  document.getElementById('view-' + view).classList.remove('hidden');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === view));
+}
+document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+document.querySelectorAll('[data-view-link]').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.viewLink)));
+
+document.getElementById('search-input').addEventListener('input', e => {
+  if (state.view !== 'search') switchView('search');
+  clearTimeout(state.searchDebounce);
+  const q = e.target.value;
+  state.searchDebounce = setTimeout(() => doSearch(q), 300);
+});
+
+document.getElementById('repo-upgrade-toggle').addEventListener('click', () => {
+  if (!state.updates.filter(u => u.source === 'repo').length) return;
+  state.anyUpdateSelected = !state.anyUpdateSelected;
+  renderUpdates(); syncApplyButton();
+});
+document.getElementById('aur-upgrade-toggle').addEventListener('click', () => {
+  if (!state.aurUpdates.length) return;
+  state.anyAurUpdateSelected = !state.anyAurUpdateSelected;
+  renderUpdates(); syncApplyButton();
+});
+
+// ----------------------------------------------------------------- drawer
+
+function openDrawer(title) {
+  state.drawerOpen = true;
+  state.currentDrawerTitle = title;
+  document.getElementById('drawer').classList.remove('drawer-hidden');
+  document.getElementById('drawer').classList.add('drawer-open');
+  document.getElementById('drawer-chevron').style.transform = 'rotate(180deg)';
+  document.getElementById('terminal-output').innerHTML = '';
+  setDrawerStatus('running', title);
+
+  // Clear progress state when opening
+  state.currentDownloadProgress = {};
+  state.currentInstallProgress = {};
+}
+function setDrawerStatus(kind, title) {
+  document.getElementById('drawer-title').textContent = title;
+  const dot = document.getElementById('drawer-status-dot');
+  dot.style.background = kind === 'running' ? 'var(--amber)' : kind === 'waiting' ? 'var(--purple)' : kind === 'done' ? 'var(--green)' : kind === 'error' ? 'var(--red)' : 'var(--muted-2)';
+  dot.classList.toggle('glow-pulse', kind === 'running' || kind === 'waiting');
+}
+function appendLine(text) {
+  const out = document.getElementById('terminal-output');
+  const div = document.createElement('div');
+  div.className = 'term-line';
+  div.textContent = text || '\u00A0';
+  out.appendChild(div);
+  out.scrollTop = out.scrollHeight;
+}
+
+// pacman/yay is blocked on stdin waiting for an answer to `text`. Show it
+// inline with Yes/No (for the common "[Y/n]"/"[y/N]" prompts) or a free-text
+// fallback for anything else, and hand the typed answer to onAnswer.
+function appendPrompt(text, onAnswer) {
+  const out = document.getElementById('terminal-output');
+  const wrap = document.createElement('div');
+  wrap.className = 'term-line rounded-lg px-3 py-3 my-1';
+  wrap.style.background = 'var(--purple-dim)';
+  wrap.style.border = '1px solid var(--purple)';
+  const isYesNo = /\[(Y\/n|y\/N)\]\s*$/.test(text);
+  const safeText = escapeHtml(text);
+
+  const resolve = (answer, label) => {
+    wrap.innerHTML = `<div class="mono text-[12.5px]">${safeText}<span class="font-semibold" style="color: var(--purple);"> ${escapeHtml(label)}</span></div>`;
+    onAnswer(answer);
+  };
+
+  if (isYesNo) {
+    wrap.innerHTML = `
+      <div class="mono text-[12.5px]">${safeText}</div>
+      <div class="flex items-center gap-2 mt-2.5">
+        <button class="prompt-yes text-[11px] font-semibold px-3 py-1.5 rounded-lg border transition-colors" style="background: var(--green-dim); color: var(--green); border-color: var(--green);">Yes</button>
+        <button class="prompt-no text-[11px] font-semibold px-3 py-1.5 rounded-lg border transition-colors" style="background: var(--red-dim); color: var(--red); border-color: var(--red);">No</button>
+      </div>`;
+    out.appendChild(wrap);
+    wrap.querySelector('.prompt-yes').addEventListener('click', () => resolve('y', '\u2192 Yes'));
+    wrap.querySelector('.prompt-no').addEventListener('click', () => resolve('n', '\u2192 No'));
+  } else {
+    wrap.innerHTML = `
+      <div class="mono text-[12.5px]">${safeText}</div>
+      <div class="flex items-center gap-2 mt-2.5">
+        <input type="text" class="prompt-input mono text-[12px] surface-2 border border-line rounded-lg px-2.5 py-1.5 w-56" placeholder="type a reply, Enter to send">
+      </div>`;
+    out.appendChild(wrap);
+    const input = wrap.querySelector('.prompt-input');
+    input.focus();
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') resolve(input.value, `\u2192 ${input.value || '(default)'}`);
+    });
+  }
+  out.scrollTop = out.scrollHeight;
+}
+
+// NEW: Function to update progress display in the drawer
+function updateProgressDisplay() {
+    const out = document.getElementById('terminal-output');
+    // Clear any previous progress lines appended by this function
+    const existingProgressLines = out.querySelectorAll('.progress-line');
+    existingProgressLines.forEach(el => el.remove());
+
+    // Display download progress
+    if (Object.keys(state.currentDownloadProgress).length > 0) {
+        const dlDiv = document.createElement('div');
+        dlDiv.className = 'term-line progress-line';
+        dlDiv.innerHTML = `<div class="progress-text">Downloading: ${state.currentDownloadProgress.package || '...'}</div><div class="progress-container"><div class="progress-bar" style="width: ${state.currentDownloadProgress.percent || '0%'};"></div></div>`;
+        out.appendChild(dlDiv);
+    }
+
+    // Display install progress
+    if (Object.keys(state.currentInstallProgress).length > 0) {
+        const instDiv = document.createElement('div');
+        instDiv.className = 'term-line progress-line';
+        const currentNum = state.currentInstallProgress.current_num;
+        const totalNum = state.currentInstallProgress.total_num;
+        let progressText = `Installing: ${state.currentInstallProgress.package || '...'} (${state.currentInstallProgress.action || 'processing'})`;
+        if (currentNum !== '?' && totalNum !== '?') {
+             progressText += ` ${currentNum}/${totalNum}`;
+        }
+        instDiv.innerHTML = `<div class="progress-text">${progressText}</div><div class="progress-container"><div class="progress-bar" style="width: ${Math.round((currentNum / totalNum) * 100) || 0}%"></div></div>`;
+        out.appendChild(instDiv);
+    }
+    out.scrollTop = out.scrollHeight;
+}
+
+document.getElementById('drawer-toggle').addEventListener('click', () => {
+  const d = document.getElementById('drawer');
+  state.drawerOpen = !state.drawerOpen;
+  d.classList.toggle('drawer-hidden', !state.drawerOpen);
+  d.classList.toggle('drawer-open', state.drawerOpen);
+  document.getElementById('drawer-chevron').style.transform = state.drawerOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+});
+
+// --------------------------------------------------------- ws transactions
+
+function runSocket(path, payload, onDone) {
+  const ws = new WebSocket(WS + path);
+  ws.onopen = () => { if (payload) ws.send(JSON.stringify(payload)); };
+  ws.onmessage = ev => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'start') {
+      appendLine('$ ' + msg.cmd);
+    } else if (msg.type === 'line') {
+      appendLine(msg.text);
+    } else if (msg.type === 'prompt') {
+      setDrawerStatus('waiting', 'Transaction log — waiting for your input');
+      appendPrompt(msg.text, answer => {
+        ws.send(JSON.stringify({ answer }));
+        setDrawerStatus('running', state.currentDrawerTitle || 'Transaction log — running…');
+      });
+    } else if (msg.type === 'progress') { // NEW: Handle progress messages
+        if (msg.download) {
+            state.currentDownloadProgress = msg.download;
+        }
+        if (msg.install) {
+            state.currentInstallProgress = msg.install;
+        }
+        updateProgressDisplay(); // Update the UI
+    } else if (msg.type === 'done') {
+      appendLine('');
+      appendLine(msg.returncode === 0 ? 'Done. (exit 0)' : `Exited with code ${msg.returncode}`);
+      // Reset progress state on done
+      state.currentDownloadProgress = {};
+      state.currentInstallProgress = {};
+      updateProgressDisplay();
+    }
+  };
+  ws.onerror = () => { appendLine('error: websocket connection failed'); setDrawerStatus('error', 'Transaction log — error'); };
+  ws.onclose = () => { onDone && onDone(); };
+  return ws;
+}
+
+document.getElementById('refresh-keyring-btn').addEventListener('click', () => {
+  const icon = document.getElementById('keyring-icon');
+  icon.classList.add('spin');
+  openDrawer('Refreshing pacman keyring…');
+  runSocket('/ws/refresh_keyrings', null, () => {
+    icon.classList.remove('spin');
+    setDrawerStatus('done', 'Transaction log — keyring refresh complete');
+  });
+});
+
+document.getElementById('sync-btn').addEventListener('click', () => {
+  const icon = document.getElementById('sync-icon');
+  icon.classList.add('spin');
+  openDrawer('Synchronizing databases…');
+  runSocket('/ws/sync', null, () => {
+    icon.classList.remove('spin');
+    setDrawerStatus('done', 'Transaction log — sync complete');
+    loadUpdates(); loadStatus();
+  });
+});
+
+document.getElementById('apply-btn').addEventListener('click', () => {
+  const install = [...state.selectedInstall];
+  const aurInstall = [...state.selectedAurInstall];
+  const upgradeAll = state.anyUpdateSelected;
+  const aurUpgradeAll = state.anyAurUpdateSelected;
+  
+  // Handle repo upgrades/installs
+  if (upgradeAll || install.length) {
+    openDrawer('Running repository transaction…');
+    runSocket('/ws/apply', { upgrade_all: upgradeAll, install }, () => {
+      // Reload data after repo transaction
+      loadUpdates(); loadInstalled(); loadHistory(); loadStatus();
+      
+      // If AUR actions are pending, run them after repo transaction completes
+      if (aurUpgradeAll || aurInstall.length) {
+        runSocket('/ws/aur_install', { upgrade_all: aurUpgradeAll, packages: aurInstall }, () => {
+            setDrawerStatus('done', 'Transaction log — completed');
+            // Clear selections after both transactions
+            state.selectedInstall.clear();
+            state.selectedAurInstall.clear();
+            state.anyUpdateSelected = false;
+            state.anyAurUpdateSelected = false;
+            syncApplyButton();
+            // Reload again after AUR transaction
+            loadUpdates(); loadInstalled(); loadHistory(); loadStatus();
+        });
+      } else {
+          setDrawerStatus('done', 'Transaction log — completed');
+          // Clear selections after both transactions
+          state.selectedInstall.clear();
+          state.selectedAurInstall.clear();
+          state.anyUpdateSelected = false;
+          state.anyAurUpdateSelected = false;
+          syncApplyButton();
+      }
+    });
+  }
+  // Handle only AUR actions if no repo actions are queued
+  else if (aurUpgradeAll || aurInstall.length) {
+      openDrawer('Running AUR transaction…');
+      runSocket('/ws/aur_install', { upgrade_all: aurUpgradeAll, packages: aurInstall }, () => {
+          setDrawerStatus('done', 'Transaction log — completed');
+          // Clear selections after AUR transaction
+          state.selectedAurInstall.clear();
+          state.anyAurUpdateSelected = false;
+          syncApplyButton();
+          // Reload data after AUR transaction
+          loadUpdates(); loadInstalled(); loadHistory(); loadStatus();
+      });
+  }
+});
+
+function removePackage(name) {
+  openDrawer(`Removing ${name}…`);
+  runSocket('/ws/remove', { packages: [name] }, () => {
+    setDrawerStatus('done', 'Transaction log — completed');
+    loadInstalled(); loadHistory(); loadStatus();
+  });
+}
+
+// ------------------------------------------------------------------ init
+
+loadStatus();
+loadUpdates();
+loadInstalled();
+loadHistory();
+</script>
+</body>
+</html>

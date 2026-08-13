@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anvil"
+version = "0.6.0"
+description = "A self-hosted pacman GUI"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+]
+
+[[project.authors]]
+name = "Muhammad Hamza"
+
+[project.urls]
+Homepage = "https://github.com/Hamza-b93/anvil"
+
+[project.scripts]
+anvil = "anvil.cli:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+anvil = ["frontend/*.html"]

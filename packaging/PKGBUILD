@@ -1,0 +1,24 @@
+# Maintainer: Muhammad Hamza <github.com/Hamza-b93>
+pkgname=anvil
+pkgver=0.6.0
+pkgrel=1
+pkgdesc="A self-hosted pacman GUI"
+arch=('any')
+url="https://github.com/Hamza-b93/anvil"
+license=('MIT')
+depends=('python' 'python-fastapi' 'python-uvicorn' 'pacman-contrib')
+optdepends=('yay: AUR search/install/remove support'
+            'polkit: graphical authentication for privileged actions')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/Hamza-b93/anvil/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+}

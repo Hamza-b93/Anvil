@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install .
+      - run: python -c "import anvil.app, anvil.cli"
+
+  pkgbuild:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync pacman databases
+        run: pacman -Syu --noconfirm
+      - name: Create build user
+        run: |
+          useradd -m builder
+          chown -R builder:builder .
+      - name: Check PKGBUILD with namcap
+        run: |
+          pacman -S --noconfirm namcap
+          su builder -c 'cd packaging && makepkg --printsrcinfo > .SRCINFO'
+          namcap packaging/PKGBUILD

@@ -1,0 +1,27 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+venv/
+.venv/
+*.egg
+
+# --- Packaging / AUR (makepkg build artifacts) ---
+packaging/pkg/
+packaging/src/
+packaging/*.pkg.tar.*
+packaging/*.log
+
+# --- Editors ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS cruft ---
+.DS_Store
+
+# --- Misc ---
+*.bak
