@@ -6,9 +6,20 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
-## [0.6.0] — 2026-08-13
+## [0.7.0] — 2026-08-13
 
 ### Added
+- **Updates table with expandable package details.** The Updates view's
+  repo and AUR sections are now a proper table (package / current version /
+  new version) instead of bare rows. Clicking a row expands it and lazily
+  fetches (and caches) that package's description, dependencies, and
+  reverse dependencies ("Required By") from the new `/api/package_info`
+  endpoint — nothing is fetched up front, so this scales fine even with
+  many pending updates. A full interactive dependency graph is intentionally
+  out of scope for this pass; this lays the data-layer groundwork for one.
+- **`GET /api/package_info?name=`**: description/deps/reverse-deps for a
+  single package, via `pacman -Qi` (falls back to `-Si`, then `yay -Si` for
+  AUR packages not yet installed).
 - **Installable package.** Restructured into `src/anvil/` (`app.py` +
   `cli.py`), with a `pyproject.toml` exposing an `anvil` console-script
   entry point. `pip install .` (or `pip install -e .` for development) now
@@ -43,6 +54,47 @@ reconstructed here beyond what's implied by the 0.5.0 entry below.
   answer them. Removed `--noconfirm` from the yay-facing actions so these
   menus route through the same prompt-relay UI already used for pacman's
   conflict prompts.
+- **PKGBUILD `depends` referenced a nonexistent package.** Arch's uvicorn
+  package is named `uvicorn`, not `python-uvicorn` (which doesn't exist) —
+  caught by a real `makepkg` build in an `archlinux:base-devel` container
+  before it could break the actual AUR package.
+- **PKGBUILD didn't install the license file** to the
+  `/usr/share/licenses/anvil/` path Arch packaging expects, flagged by
+  `namcap`; `package()` now installs it explicitly.
+- **`sudo` password prompts could hang the launching terminal instead of
+  reaching the UI.** `yay` shells out to plain `sudo` (not `pkexec`) for an
+  AUR build's final install step, and `sudo` writes its password prompt
+  directly to `/dev/tty`, bypassing stdout/stderr — completely invisible to
+  the prompt-relay this app already had. Subprocesses are now started with
+  `start_new_session=True`, detaching them from the launching terminal so
+  `sudo` can no longer reach it; when a graphical askpass helper
+  (`ssh-askpass`, `ksshaskpass`, etc.) is installed, `SUDO_ASKPASS` is set
+  so `sudo` prompts through that instead of failing.
+- **A false "prompt" could pop up mid-transaction and swallow a later
+  answer.** The idle-timeout heuristic that detects an unanswered prompt
+  (no output for 0.4s) can't tell "blocked waiting on stdin" apart from
+  "pacman/yay is just still computing" (resolving dependencies, verifying
+  signatures) — both look identical from the outside. A slow computation
+  could trigger a phantom prompt; an Enter sent to dismiss it then queued
+  into stdin and got consumed by the *next real* prompt instead ("Proceed
+  with installation? [Y/n]"), silently defaulting it to yes. The idle
+  timeout now only fires as a genuine prompt if the leftover text also has
+  the shape of one (ends in `[Y/n]`, `[y/N]`, yay's `==>` menu marker, or
+  `:`); otherwise it keeps waiting.
+- **AUR pkgname `anvil` was already taken** by an unrelated project —
+  the first real publish attempt (tagged as `v0.6.0`, which is why version
+  numbering jumps straight to 0.7.0 here) failed with a permission-denied
+  push for exactly this reason. Renamed the AUR package to `anvil-manager`
+  (`provides`/`conflicts` on `anvil` so it's still found under the
+  project's real name); the `anvil` command and Python package name are
+  unaffected.
+- **PKGBUILD's `build()`/`package()` assumed the downloaded tarball
+  extracts to `$pkgname-$pkgver`**, but GitHub's archive keeps the repo's
+  own casing (`Anvil-$pkgver`) regardless of pkgname or the URL's casing —
+  a real, previously-undetected bug (an earlier "real build" test used a
+  self-made tarball with a matching prefix, which masked it). Caught by
+  building against the actual GitHub release tarball for `v0.6.0`; fixed
+  via an explicit `_srcdir` variable instead of relying on `$pkgname`.
 
 ## [0.5.0] — 2026-08-13
 

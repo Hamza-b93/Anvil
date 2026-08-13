@@ -26,6 +26,14 @@ back to you, prompts included.
   agent). Privileged actions (sync, apply, remove, keyring refresh) run via
   `pkexec`, which will pop your desktop's normal password prompt — Anvil
   never asks for or stores your password itself.
+- **A graphical askpass helper** (optional, but recommended if you use AUR
+  actions): `yay` shells out to plain `sudo` — not `pkexec` — for the final
+  install step of an AUR build. Anvil detects and uses one of
+  `ssh-askpass`, `x11-ssh-askpass`, `lxqt-openssh-askpass`, `ksshaskpass`,
+  or `seahorse-ssh-askpass` if present, so `sudo`'s password prompt appears
+  as a graphical dialog instead of failing outright (see "Interactive
+  prompts" below for why this is needed). KDE Plasma ships `ksshaskpass`;
+  GNOME users can install `seahorse`.
 
 ## Running it
 
@@ -78,6 +86,9 @@ anvil/
 - `/api/search` → `pacman -Ss <query>` (repo search)
 - `/api/aur_search` → `yay -Ss <query>` (AUR search)
 - `/api/installed` → `pacman -Q` / `pacman -Qe`
+- `/api/package_info?name=` → `pacman -Qi` (falls back to `-Si`, then
+  `yay -Si`); description, dependencies, and reverse dependencies for one
+  package, fetched lazily when you expand a row in the Updates table
 - `/api/history` → parses `/var/log/pacman.log`
 
 **Privileged actions** (`WS /ws/...`) run via `pkexec`, streaming stdout back
@@ -103,15 +114,30 @@ menus (exclude packages, clean build, show diffs, edit PKGBUILD), so it
 just leaves yay blocked on stdin with no TTY to answer it — worse than
 not passing the flag at all.
 
-Instead, the backend watches each command's output for the shape of an
-unanswered prompt (text left sitting with no trailing newline and nothing
-more coming) and relays it to the browser as a message the UI renders
-inline in the transaction drawer — Yes/No buttons for pacman's `[Y/n]`
-/ `[y/N]` prompts, a free-text field for anything else (including yay's
-own menus). Your answer is written straight back to the process's stdin,
-so a "Proceed with installation?", a "`pkgA` and `pkgB` are in conflict,
-remove `pkgB`?", or a "Diffs to show?" from yay is something you can
-actually answer instead of a hard failure or a hang.
+Instead, the backend watches each command's output for text left sitting
+with no trailing newline and nothing more coming for a short idle window —
+and, to avoid mistaking pacman/yay just thinking (resolving dependencies,
+verifying signatures) for an actual unanswered prompt, only treats that as
+one if the leftover text also ends in the shape a real prompt uses
+(`[Y/n]`, `[y/N]`, yay's `==>` menu marker, or a trailing `:`). A real
+prompt is relayed to the browser and rendered inline in the transaction
+drawer — Yes/No buttons for pacman's `[Y/n]` / `[y/N]` prompts, a free-text
+field for anything else (including yay's own menus). Your answer is
+written straight back to the process's stdin, so a "Proceed with
+installation?", a "`pkgA` and `pkgB` are in conflict, remove `pkgB`?", or
+a "Diffs to show?" from yay is something you can actually answer instead
+of a hard failure or a hang.
+
+One prompt this mechanism *can't* see: `yay` shells out to plain `sudo`
+(not `pkexec`) for an AUR build's final install step, and `sudo` writes
+its password prompt directly to `/dev/tty` rather than stdout/stderr,
+bypassing this app's output capture entirely — left alone, that silently
+hangs whatever terminal launched the server. Anvil's subprocesses run
+detached from that controlling terminal (so `sudo` can't reach it) and set
+`SUDO_ASKPASS` to a graphical askpass helper if one is installed, so `sudo`
+prompts through that instead. Without one installed, an AUR action needing
+`sudo` will fail with a clear "no askpass program specified" error in the
+transaction log rather than hanging silently.
 
 ## Why "Apply" always does a full upgrade when any update is checked
 

@@ -8,6 +8,10 @@ Read-only endpoints (no privilege needed):
   GET  /api/search?q=   repo search, via `pacman -Ss`
   GET  /api/aur_search?q=   AUR search, via `yay -Ss`
   GET  /api/installed   installed packages, via `pacman -Q` / `-Qe`
+  GET  /api/package_info?name=   description/deps/reverse-deps for one
+                                  package, via `pacman -Qi` (falls back to
+                                  `-Si`, then `yay -Si` for not-yet-installed
+                                  AUR packages)
   GET  /api/history      recent transactions, parsed from /var/log/pacman.log
 
 Privileged actions (prompt via polkit's pkexec, never store a password):
@@ -33,7 +37,9 @@ and is written straight to the subprocess's stdin.
 """
 
 import asyncio
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -257,6 +263,79 @@ def installed():
     return {"results": results}
 
 
+# ---------------------------------------------------------- package info --
+
+def _parse_info_block(text: str) -> dict[str, str]:
+    """
+    Parses the "Field   : value" block `pacman -Qi`/`-Si`/`yay -Si` print.
+    Continuation lines (wrapped values, additional Optional Deps entries)
+    are indented with no field name, so they're distinguished from a new
+    field purely by not starting at column 0.
+    """
+    fields: dict[str, str] = {}
+    key = None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if line[:1] != " " and " : " in line:
+            key, _, value = line.partition(" : ")
+            key = key.strip()
+            fields[key] = value.strip()
+        elif key:
+            fields[key] = fields[key] + "\n" + line.strip()
+    return fields
+
+
+@app.get("/api/package_info")
+def package_info(name: str = ""):
+    name = name.strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+
+    # Installed metadata is preferred: it's the only source with accurate
+    # "Required By" (reverse dependency) data, and it works identically for
+    # repo and AUR packages alike once installed.
+    rc, out, err = run_cmd(["pacman", "-Qi", name])
+    origin = "installed"
+    if rc != 0:
+        rc, out, err = run_cmd(["pacman", "-Si", name])
+        origin = "repo"
+    if rc != 0 and shutil.which("yay"):
+        rc, out, err = run_cmd(["yay", "-Si", name])
+        origin = "aur"
+    if rc != 0:
+        return JSONResponse(
+            {"error": err.strip() or f"no info found for {name}"}, status_code=404
+        )
+
+    fields = _parse_info_block(out)
+
+    def get(key: str) -> str | None:
+        value = fields.get(key, "").strip()
+        return None if value in ("", "None") else value
+
+    def get_list(key: str) -> list[str]:
+        value = get(key)
+        return value.split() if value else []
+
+    optional_deps = get("Optional Deps")
+
+    return {
+        "name": name,
+        "origin": origin,
+        "version": get("Version"),
+        "description": get("Description"),
+        "url": get("URL"),
+        "licenses": get_list("Licenses"),
+        "depends": get_list("Depends On"),
+        "optional_deps": optional_deps.splitlines() if optional_deps else [],
+        "required_by": get_list("Required By"),
+        "provides": get_list("Provides"),
+        "installed_size": get("Installed Size"),
+        "download_size": get("Download Size"),
+    }
+
+
 # ---------------------------------------------------------------- history --
 
 _LOG_LINE = re.compile(
@@ -283,18 +362,55 @@ def history():
 
 # ------------------------------------------------------- privileged actions
 
-# Any output pacman/yay leaves sitting without a trailing newline, with no
-# more bytes following, is exactly what a `fputs(...); read stdin` prompt
-# looks like on a pipe. That's how we tell "a prompt is waiting" apart from
-# "a line is still being written" without knowing pacman's prompt text.
+# Any output pacman/yay leaves sitting without a trailing newline is
+# *possibly* a `fputs(...); read stdin` prompt waiting on a pipe — but
+# pacman/yay can just as easily go quiet for a while while resolving
+# dependencies or verifying signatures, and that thinking time can easily
+# exceed this timeout. Requiring the leftover text to also end in a shape
+# real prompts use ("[Y/n]", "[y/N]", yay's "==>" menu marker, or a
+# trailing ":") avoids misreading that as an unanswered prompt — which
+# previously could queue a stray reply into stdin that then got silently
+# consumed by the next *real* prompt instead of the one the user answered.
 _PROMPT_IDLE_SECONDS = 0.4
+_PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|:)\s*$")
+
+# yay shells out to plain `sudo` (not pkexec) for the final install step of
+# an AUR build. sudo's password prompt is written directly to /dev/tty,
+# bypassing stdout/stderr entirely — our output capture below can never see
+# it, so left alone it just blocks silently on whatever terminal launched
+# this server. start_new_session=True detaches the child from that
+# controlling terminal so sudo can't reach it; if a graphical askpass
+# helper is installed, SUDO_ASKPASS lets sudo prompt through that instead of
+# failing outright.
+_ASKPASS_CANDIDATES = (
+    "ssh-askpass",
+    "x11-ssh-askpass",
+    "lxqt-openssh-askpass",
+    "ksshaskpass",
+    "seahorse-ssh-askpass",
+)
+
+
+def _find_askpass() -> str | None:
+    for name in _ASKPASS_CANDIDATES:
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
 
 
 async def stream_process(ws: WebSocket, cmd: list[str]):
     await ws.send_json({"type": "start", "cmd": " ".join(cmd)})
     try:
+        env = os.environ.copy()
+        askpass = _find_askpass()
+        if askpass:
+            env["SUDO_ASKPASS"] = askpass
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            env=env,
+            start_new_session=True,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -390,10 +506,16 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
             try:
                 chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=_PROMPT_IDLE_SECONDS)
             except asyncio.TimeoutError:
-                # Nothing arrived in time. If we're mid-line, that's not a
-                # slow line — it's pacman/yay blocked on a read() of its own,
-                # waiting for us to answer.
-                if not buffer:
+                # Nothing arrived in time. That alone doesn't mean pacman/yay
+                # is blocked on a read() of its own waiting for us to answer
+                # — it may just still be computing (resolving dependencies,
+                # verifying signatures). Only treat it as a real prompt if
+                # the leftover text also has the shape of one; otherwise
+                # keep waiting instead of misreading thinking time as an
+                # unanswered question.
+                if not buffer or not _PROMPT_SHAPE_RE.search(
+                    buffer.decode(errors="ignore").rstrip()
+                ):
                     continue
                 prompt_text = buffer.decode(errors="ignore")
                 buffer = b""

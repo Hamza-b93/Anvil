@@ -29,7 +29,7 @@ jobs:
       - name: Publish AUR package
         uses: KSXGitHub/github-actions-deploy-aur@v3
         with:
-          pkgname: anvil
+          pkgname: anvil-manager
           pkgbuild: packaging/PKGBUILD
           commit_username: ${{ github.actor }}
           commit_email: ${{ github.actor }}@users.noreply.github.com

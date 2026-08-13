@@ -61,6 +61,18 @@
   .pkg-row { transition: background 0.12s ease; border-bottom: 1px solid var(--border-soft); }
   .pkg-row:last-child { border-bottom: none; }
   .pkg-row:hover { background: var(--surface-2); }
+  .update-table-head { display: grid; grid-template-columns: minmax(0,1fr) 118px 118px 24px; gap: 12px; padding: 9px 20px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-2); border-bottom: 1px solid var(--border); }
+  .update-row { display: grid; grid-template-columns: minmax(0,1fr) 118px 118px 24px; gap: 12px; align-items: center; padding: 12px 20px; cursor: pointer; border-bottom: 1px solid var(--border-soft); transition: background 0.12s ease; }
+  .update-row:hover { background: var(--surface-2); }
+  .update-row:last-child:not(.expanded) { border-bottom: none; }
+  .update-chevron { transition: transform 0.15s ease; color: var(--muted-2); flex-shrink: 0; }
+  .update-chevron.open { transform: rotate(90deg); }
+  .update-detail { padding: 4px 20px 18px 20px; border-bottom: 1px solid var(--border-soft); background: var(--surface-2); }
+  .update-detail:last-child { border-bottom: none; }
+  .update-detail dl { display: grid; grid-template-columns: 110px 1fr; gap: 6px 14px; font-size: 12px; }
+  .update-detail dt { color: var(--muted-2); }
+  .update-detail dd { color: var(--muted); word-break: break-word; }
+  .dep-chip { display: inline-block; background: var(--surface-3); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; margin: 0 4px 4px 0; font-size: 11px; }
   .drawer-hidden {
     height: 0px !important;
     opacity: 0;
@@ -111,7 +123,7 @@
           </svg>
         </div>
         <span class="font-bold text-[15px] tracking-tight">Anvil</span>
-        <span class="mono text-[10px] text-muted-2">v0.6.0</span>
+        <span class="mono text-[10px] text-muted-2">v0.7.0</span>
       </div>
 
       <div class="flex-1"></div>
@@ -311,6 +323,8 @@ const state = {
   anyAurUpdateSelected: false, // For AUR updates
   updates: [], // Repo updates
   aurUpdates: [], // AUR updates
+  expandedUpdates: new Set(), // package names with an open detail row
+  packageInfoCache: new Map(), // name -> info object | 'loading' | Error
   drawerOpen: false,
   searchDebounce: null,
   // New state for progress tracking
@@ -530,42 +544,48 @@ function renderUpgradeToggle(btn, count, selected) {
   }
 }
 
+function buildUpdateTable(updates) {
+  const header = `
+    <div class="update-table-head">
+      <div>Package</div><div>Current</div><div>New</div><div></div>
+    </div>`;
+  const rows = updates.map(u => {
+    const expanded = state.expandedUpdates.has(u.name);
+    return `
+    <div class="update-row" data-name="${escapeHtml(u.name)}">
+      <span class="font-medium text-[13px] truncate">${escapeHtml(u.name)}</span>
+      <span class="mono text-[11px] text-muted-2">${escapeHtml(u.old_version)}</span>
+      <span class="mono text-[11px] accent">${escapeHtml(u.new_version)}</span>
+      <svg class="update-chevron${expanded ? ' open' : ''}" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="update-detail${expanded ? '' : ' hidden'}" data-name="${escapeHtml(u.name)}"></div>`;
+  }).join('');
+  return header + rows;
+}
+
 function renderUpdates() {
   const el = document.getElementById('updates-list');
   const aurEl = document.getElementById('aur-updates-list');
 
   // Render Repo Updates
   const repoUpdates = state.updates.filter(u => u.source === 'repo');
-  if (!repoUpdates.length) {
-    el.innerHTML = `<div class="px-5 py-10 text-center text-muted text-[13px]">No repository updates available.</div>`;
-  } else {
-    el.innerHTML = repoUpdates.map(u => `
-    <div class="pkg-row flex items-center gap-3 px-5 py-3.5">
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <span class="font-medium text-[13px]">${escapeHtml(u.name)}</span>
-          <span class="mono text-[10px] text-muted-2">${escapeHtml(u.old_version)} <span class="accent">→</span> ${escapeHtml(u.new_version)}</span>
-        </div>
-      </div>
-    </div>`).join('');
-  }
+  el.innerHTML = repoUpdates.length
+    ? buildUpdateTable(repoUpdates)
+    : `<div class="px-5 py-10 text-center text-muted text-[13px]">No repository updates available.</div>`;
   renderUpgradeToggle(document.getElementById('repo-upgrade-toggle'), repoUpdates.length, state.anyUpdateSelected);
 
   // Render AUR Updates
-  if (!state.aurUpdates.length) {
-    aurEl.innerHTML = `<div class="px-5 py-10 text-center text-muted text-[13px]">No AUR updates available.</div>`;
-  } else {
-    aurEl.innerHTML = state.aurUpdates.map(u => `
-    <div class="pkg-row flex items-center gap-3 px-5 py-3.5">
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <span class="font-medium text-[13px]">${escapeHtml(u.name)}</span>
-          <span class="mono text-[10px] text-muted-2">${escapeHtml(u.old_version)} <span class="accent">→</span> ${escapeHtml(u.new_version)}</span>
-        </div>
-      </div>
-    </div>`).join('');
-  }
+  aurEl.innerHTML = state.aurUpdates.length
+    ? buildUpdateTable(state.aurUpdates)
+    : `<div class="px-5 py-10 text-center text-muted text-[13px]">No AUR updates available.</div>`;
   renderUpgradeToggle(document.getElementById('aur-upgrade-toggle'), state.aurUpdates.length, state.anyAurUpdateSelected);
+
+  // Rows that were already expanded before this refresh (e.g. loadUpdates()
+  // re-polling) get their cached detail redrawn without a re-fetch.
+  state.expandedUpdates.forEach(name => {
+    const cached = state.packageInfoCache.get(name);
+    if (cached && cached !== 'loading') renderPackageDetail(name, cached);
+  });
 
   // Update dashboard preview - show both repo and aur updates
   const dashPreviewEl = document.getElementById('dash-preview');
@@ -862,6 +882,75 @@ document.getElementById('apply-btn').addEventListener('click', () => {
       });
   }
 });
+
+// ------------------------------------------------------- update details
+
+document.addEventListener('click', (e) => {
+  const row = e.target.closest('.update-row');
+  if (row) toggleUpdateDetail(row.dataset.name);
+});
+
+function toggleUpdateDetail(name) {
+  const detailEl = document.querySelector(`.update-detail[data-name="${CSS.escape(name)}"]`);
+  const row = detailEl && detailEl.previousElementSibling;
+  if (!detailEl || !row) return;
+  const chevron = row.querySelector('.update-chevron');
+  if (state.expandedUpdates.has(name)) {
+    state.expandedUpdates.delete(name);
+    detailEl.classList.add('hidden');
+    chevron.classList.remove('open');
+    return;
+  }
+  state.expandedUpdates.add(name);
+  detailEl.classList.remove('hidden');
+  chevron.classList.add('open');
+  const cached = state.packageInfoCache.get(name);
+  if (cached && cached !== 'loading') {
+    renderPackageDetail(name, cached);
+  } else {
+    fetchPackageDetail(name);
+  }
+}
+
+async function fetchPackageDetail(name) {
+  state.packageInfoCache.set(name, 'loading');
+  const detailEl = document.querySelector(`.update-detail[data-name="${CSS.escape(name)}"]`);
+  if (detailEl) detailEl.innerHTML = `<div class="text-muted text-[12px] py-3">Loading package info…</div>`;
+  try {
+    const info = await getJSON('/api/package_info?name=' + encodeURIComponent(name));
+    state.packageInfoCache.set(name, info);
+    if (state.expandedUpdates.has(name)) renderPackageDetail(name, info);
+  } catch (e) {
+    state.packageInfoCache.set(name, e);
+    if (state.expandedUpdates.has(name)) renderPackageDetail(name, e);
+  }
+}
+
+function renderDepChips(items, limit = 20) {
+  if (!items || !items.length) return '<span class="text-muted-2">None</span>';
+  const shown = items.slice(0, limit);
+  const extra = items.length - shown.length;
+  return shown.map(d => `<span class="dep-chip">${escapeHtml(d)}</span>`).join('')
+    + (extra > 0 ? `<span class="text-muted-2 text-[11px]"> +${extra} more</span>` : '');
+}
+
+function renderPackageDetail(name, info) {
+  const el = document.querySelector(`.update-detail[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  if (info instanceof Error) {
+    el.innerHTML = `<div class="text-[12px] py-3" style="color: var(--red);">${escapeHtml(info.message)}</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <dl class="pt-3">
+      <dt>Description</dt><dd>${escapeHtml(info.description || '—')}</dd>
+      <dt>Depends on</dt><dd>${renderDepChips(info.depends)}</dd>
+      <dt>Required by</dt><dd>${renderDepChips(info.required_by)}</dd>
+      ${info.optional_deps && info.optional_deps.length ? `<dt>Optional deps</dt><dd>${info.optional_deps.map(d => escapeHtml(d)).join('<br>')}</dd>` : ''}
+      ${info.installed_size ? `<dt>Installed size</dt><dd>${escapeHtml(info.installed_size)}</dd>` : ''}
+      ${info.url ? `<dt>URL</dt><dd class="truncate">${escapeHtml(info.url)}</dd>` : ''}
+    </dl>`;
+}
 
 function removePackage(name) {
   openDrawer(`Removing ${name}…`);
