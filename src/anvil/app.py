@@ -21,6 +21,8 @@ Privileged actions (prompt via polkit's pkexec, never store a password):
   WS   /ws/remove              pkexec pacman -R <pkgs>
   WS   /ws/aur_install        yay -S <pkgs>
   WS   /ws/aur_remove        yay -R <pkgs>
+  WS   /ws/clean_cache        pkexec paccache -rk1 (old repo package cache)
+  WS   /ws/clean_aur_cache    yay -Sc (old AUR build/cache files)
 
 Everything here just shells out to the real pacman/yay binary and streams its
 real stdout back to the browser line by line — there is no separate
@@ -390,11 +392,23 @@ _ASKPASS_CANDIDATES = (
     "seahorse-ssh-askpass",
 )
 
+# Arch's x11-ssh-askpass package installs its binaries under /usr/lib/ssh/
+# (matching OpenSSH's own SSH_ASKPASS fallback convention) rather than a
+# PATH bin directory, so a plain `shutil.which` lookup misses it even when
+# it's installed — check these fixed locations too.
+_ASKPASS_EXTRA_PATHS = (
+    "/usr/lib/ssh/ssh-askpass",
+    "/usr/lib/ssh/x11-ssh-askpass",
+)
+
 
 def _find_askpass() -> str | None:
     for name in _ASKPASS_CANDIDATES:
         path = shutil.which(name)
         if path:
+            return path
+    for path in _ASKPASS_EXTRA_PATHS:
+        if os.access(path, os.X_OK):
             return path
     return None
 
@@ -655,6 +669,30 @@ async def ws_aur_remove(ws: WebSocket):
         # Use yay for AUR removal
         await stream_process(ws, ["yay", "-R", *pkgs])
 
+    await ws.close()
+
+
+@app.websocket("/ws/clean_cache")
+async def ws_clean_cache(ws: WebSocket):
+    """
+    Trims /var/cache/pacman/pkg via pacman-contrib's paccache, keeping only
+    the single most recent cached version of each package (uninstalled
+    packages' cached files are dropped entirely) — the repo-package
+    equivalent of pamac's "clear old build files" option.
+    """
+    await ws.accept()
+    await stream_process(ws, ["pkexec", "paccache", "-rk1"])
+    await ws.close()
+
+
+@app.websocket("/ws/clean_aur_cache")
+async def ws_clean_aur_cache(ws: WebSocket):
+    """
+    Clears yay's AUR build cache (~/.cache/yay), the source of the stale
+    "reinstalling instead of upgrading" bug a leftover clone can cause.
+    """
+    await ws.accept()
+    await stream_process(ws, ["yay", "-Sc"])
     await ws.close()
 
 

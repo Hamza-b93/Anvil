@@ -33,7 +33,9 @@ back to you, prompts included.
   or `seahorse-ssh-askpass` if present, so `sudo`'s password prompt appears
   as a graphical dialog instead of failing outright (see "Interactive
   prompts" below for why this is needed). KDE Plasma ships `ksshaskpass`;
-  GNOME users can install `seahorse`.
+  GNOME users can install `seahorse`. `x11-ssh-askpass` installs its
+  binary under `/usr/lib/ssh/` rather than a `PATH` bin directory, so
+  Anvil checks that fixed location too, not just `PATH`.
 
 ## Running it
 
@@ -101,6 +103,10 @@ to the browser line by line as it happens:
 - `/ws/remove` → `pkexec pacman -R <package>`
 - `/ws/aur_install` → `yay -S <packages>`
 - `/ws/aur_remove` → `yay -R <packages>`
+- `/ws/clean_cache` → `pkexec paccache -rk1` (trims `/var/cache/pacman/pkg` to
+  the single most recent cached version of each package)
+- `/ws/clean_aur_cache` → `yay -Sc` (clears yay's AUR build cache,
+  `~/.cache/yay`)
 
 ### Interactive prompts
 

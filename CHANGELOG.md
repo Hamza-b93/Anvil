@@ -6,6 +6,29 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.2] — 2026-08-13
+
+### Added
+- **Interactive dependency tree.** The Updates view's expandable package
+  details now render "Depends On" / "Required By" as a lazily-expandable
+  chip tree instead of a flat list: clicking a chip fetches that package's
+  own `/api/package_info` on demand and nests its dependencies underneath.
+  Fan-out is capped at each level (20 chips at the root, 15 per nested
+  level), and cycles are detected via the ancestor chain and rendered as an
+  inert chip instead of recursing.
+- **Cache cleanup buttons.** `/ws/clean_cache` (`pkexec paccache -rk1`) and
+  `/ws/clean_aur_cache` (`yay -Sc`) trim old cached package files for repo
+  and AUR packages respectively, matching pamac-aur's "clear old build
+  files" option.
+
+### Fixed
+- **AUR installs could fail with "a terminal is required... or configure
+  an askpass helper" even with a graphical askpass helper installed.**
+  `_find_askpass()` only searched `PATH`, but Arch's `x11-ssh-askpass`
+  package installs its binary under `/usr/lib/ssh/` instead of a `PATH`
+  bin directory, so it was never found and `SUDO_ASKPASS` was never set.
+  That fixed location is now checked too.
+
 ## [0.7.0] — 2026-08-13
 
 ### Added

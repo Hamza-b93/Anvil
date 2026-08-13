@@ -73,6 +73,13 @@
   .update-detail dt { color: var(--muted-2); }
   .update-detail dd { color: var(--muted); word-break: break-word; }
   .dep-chip { display: inline-block; background: var(--surface-3); border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; margin: 0 4px 4px 0; font-size: 11px; }
+  .dep-chip-toggle { cursor: pointer; font: inherit; color: inherit; }
+  .dep-chip-toggle:hover { border-color: var(--border-soft); color: var(--text); }
+  .dep-chip-cycle { opacity: 0.6; font-style: italic; cursor: default; }
+  .dep-toggle-icon { display: inline-block; width: 8px; font-size: 9px; }
+  .dep-node { display: inline-block; vertical-align: top; }
+  .dep-children { display: block; margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--border-soft); }
+  .dep-children.hidden { display: none; }
   .drawer-hidden {
     height: 0px !important;
     opacity: 0;
@@ -136,6 +143,14 @@
       <button id="refresh-keyring-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0" title="Refresh pacman keyring (pacman-key --refresh-keys, then re-sync archlinux-keyring)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="keyring-icon"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
         <span class="hidden sm:inline">Refresh keyring</span>
+      </button>
+      <button id="clean-cache-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0" title="Trim old cached package files for repo packages (pkexec paccache -rk1)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="clean-cache-icon"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"/></svg>
+        <span class="hidden sm:inline">Clean cache</span>
+      </button>
+      <button id="clean-aur-cache-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0" title="Clear yay's AUR build cache (yay -Sc)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="clean-aur-cache-icon"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"/></svg>
+        <span class="hidden sm:inline">Clean AUR cache</span>
       </button>
       <button id="sync-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" id="sync-icon"><path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 3v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -831,6 +846,26 @@ document.getElementById('sync-btn').addEventListener('click', () => {
   });
 });
 
+document.getElementById('clean-cache-btn').addEventListener('click', () => {
+  const icon = document.getElementById('clean-cache-icon');
+  icon.classList.add('spin');
+  openDrawer('Cleaning old repo package cache…');
+  runSocket('/ws/clean_cache', null, () => {
+    icon.classList.remove('spin');
+    setDrawerStatus('done', 'Transaction log — cache cleanup complete');
+  });
+});
+
+document.getElementById('clean-aur-cache-btn').addEventListener('click', () => {
+  const icon = document.getElementById('clean-aur-cache-icon');
+  icon.classList.add('spin');
+  openDrawer('Cleaning old AUR build cache…');
+  runSocket('/ws/clean_aur_cache', null, () => {
+    icon.classList.remove('spin');
+    setDrawerStatus('done', 'Transaction log — AUR cache cleanup complete');
+  });
+});
+
 document.getElementById('apply-btn').addEventListener('click', () => {
   const install = [...state.selectedInstall];
   const aurInstall = [...state.selectedAurInstall];
@@ -926,12 +961,105 @@ async function fetchPackageDetail(name) {
   }
 }
 
-function renderDepChips(items, limit = 20) {
-  if (!items || !items.length) return '<span class="text-muted-2">None</span>';
+// A package's "Depends On" / "Required By" fields may carry a version
+// constraint (e.g. "glibc>=2.30") — strip it to get the actual package name
+// to query and to compare against the ancestor chain for cycle detection.
+function depBaseName(raw) {
+  return raw.split(/[<>=]/, 1)[0];
+}
+
+// Builds one node of the lazily-expandable dependency tree: a chip that,
+// on first click, fetches that package's info and renders its own
+// depends/required_by chips as a nested, indented level. `ancestors` is the
+// chain of base names already expanded above this node in the same branch —
+// a name already in it would recurse forever, so it's rendered inert instead.
+function buildDepNode(raw, kind, ancestors) {
+  const wrap = document.createElement('span');
+  wrap.className = 'dep-node';
+  const base = depBaseName(raw);
+
+  if (ancestors.includes(base)) {
+    const span = document.createElement('span');
+    span.className = 'dep-chip dep-chip-cycle';
+    span.textContent = raw + ' ↺';
+    span.title = 'Circular dependency — already shown above';
+    wrap.appendChild(span);
+    return wrap;
+  }
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dep-chip dep-chip-toggle';
+  const icon = document.createElement('span');
+  icon.className = 'dep-toggle-icon';
+  icon.textContent = '▸';
+  btn.appendChild(icon);
+  btn.appendChild(document.createTextNode(' ' + raw));
+
+  const childrenEl = document.createElement('div');
+  childrenEl.className = 'dep-children hidden';
+  let loaded = false;
+
+  btn.addEventListener('click', async () => {
+    const isOpen = !childrenEl.classList.contains('hidden');
+    if (isOpen) {
+      childrenEl.classList.add('hidden');
+      icon.textContent = '▸';
+      return;
+    }
+    childrenEl.classList.remove('hidden');
+    icon.textContent = '▾';
+    if (loaded) return;
+    loaded = true;
+    childrenEl.innerHTML = '<span class="text-muted-2 text-[11px]">Loading…</span>';
+    try {
+      let info = state.packageInfoCache.get(base);
+      if (!info || info === 'loading') {
+        info = await getJSON('/api/package_info?name=' + encodeURIComponent(base));
+        state.packageInfoCache.set(base, info);
+      }
+      const items = (kind === 'depends' ? info.depends : info.required_by) || [];
+      childrenEl.innerHTML = '';
+      if (!items.length) {
+        childrenEl.innerHTML = '<span class="text-muted-2 text-[11px]">None</span>';
+      } else {
+        const limit = 15;
+        const shown = items.slice(0, limit);
+        const nextAncestors = ancestors.concat([base]);
+        shown.forEach(n => childrenEl.appendChild(buildDepNode(n, kind, nextAncestors)));
+        if (items.length > limit) {
+          const extra = document.createElement('span');
+          extra.className = 'text-muted-2 text-[11px]';
+          extra.textContent = `+${items.length - limit} more`;
+          childrenEl.appendChild(extra);
+        }
+      }
+    } catch (e) {
+      childrenEl.innerHTML = `<span class="text-[11px]" style="color: var(--red);">${escapeHtml(e.message)}</span>`;
+    }
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(childrenEl);
+  return wrap;
+}
+
+function renderDepChips(items, kind, ancestors, limit = 20) {
+  const container = document.createElement('span');
+  if (!items || !items.length) {
+    container.innerHTML = '<span class="text-muted-2">None</span>';
+    return container;
+  }
   const shown = items.slice(0, limit);
   const extra = items.length - shown.length;
-  return shown.map(d => `<span class="dep-chip">${escapeHtml(d)}</span>`).join('')
-    + (extra > 0 ? `<span class="text-muted-2 text-[11px]"> +${extra} more</span>` : '');
+  shown.forEach(raw => container.appendChild(buildDepNode(raw, kind, ancestors)));
+  if (extra > 0) {
+    const span = document.createElement('span');
+    span.className = 'text-muted-2 text-[11px]';
+    span.textContent = `+${extra} more`;
+    container.appendChild(span);
+  }
+  return container;
 }
 
 function renderPackageDetail(name, info) {
@@ -941,15 +1069,42 @@ function renderPackageDetail(name, info) {
     el.innerHTML = `<div class="text-[12px] py-3" style="color: var(--red);">${escapeHtml(info.message)}</div>`;
     return;
   }
-  el.innerHTML = `
-    <dl class="pt-3">
-      <dt>Description</dt><dd>${escapeHtml(info.description || '—')}</dd>
-      <dt>Depends on</dt><dd>${renderDepChips(info.depends)}</dd>
-      <dt>Required by</dt><dd>${renderDepChips(info.required_by)}</dd>
-      ${info.optional_deps && info.optional_deps.length ? `<dt>Optional deps</dt><dd>${info.optional_deps.map(d => escapeHtml(d)).join('<br>')}</dd>` : ''}
-      ${info.installed_size ? `<dt>Installed size</dt><dd>${escapeHtml(info.installed_size)}</dd>` : ''}
-      ${info.url ? `<dt>URL</dt><dd class="truncate">${escapeHtml(info.url)}</dd>` : ''}
-    </dl>`;
+  el.innerHTML = '';
+  const dl = document.createElement('dl');
+  dl.className = 'pt-3';
+
+  function addRow(label, contentEl) {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.appendChild(contentEl);
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+  function addTextRow(label, text, extraClass) {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    if (extraClass) dd.className = extraClass;
+    dd.textContent = text;
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+
+  addTextRow('Description', info.description || '—');
+  addRow('Depends on', renderDepChips(info.depends, 'depends', [depBaseName(name)]));
+  addRow('Required by', renderDepChips(info.required_by, 'required_by', [depBaseName(name)]));
+  if (info.optional_deps && info.optional_deps.length) {
+    const dt = document.createElement('dt');
+    dt.textContent = 'Optional deps';
+    const dd = document.createElement('dd');
+    dd.innerHTML = info.optional_deps.map(d => escapeHtml(d)).join('<br>');
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+  if (info.installed_size) addTextRow('Installed size', info.installed_size);
+  if (info.url) addTextRow('URL', info.url, 'truncate');
+  el.appendChild(dl);
 }
 
 function removePackage(name) {
