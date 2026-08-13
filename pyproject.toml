@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anvil"
-version = "0.7.3"
+version = "0.7.4"
 description = "A self-hosted pacman GUI"
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,4 +27,4 @@ anvil-manager = "anvil.cli:run"
 where = ["src"]
 
 [tool.setuptools.package-data]
-anvil = ["frontend/*.html"]
+anvil = ["frontend/*.html", "frontend/vendor/*.js"]

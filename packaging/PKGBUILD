@@ -2,7 +2,7 @@
 # "anvil" was already taken on the AUR by an unrelated project, hence the
 # pkgname suffix below; the upstream project and repo are still just Anvil.
 pkgname=anvil-manager
-pkgver=0.7.3
+pkgver=0.7.4
 pkgrel=1
 pkgdesc="A self-hosted pacman GUI"
 arch=('any')

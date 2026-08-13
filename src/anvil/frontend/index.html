@@ -80,6 +80,12 @@
   .dep-node { display: inline-block; vertical-align: top; }
   .dep-children { display: block; margin: 2px 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--border-soft); }
   .dep-children.hidden { display: none; }
+  #graph-svg { cursor: grab; touch-action: none; display: block; }
+  #graph-svg.dragging { cursor: grabbing; }
+  .graph-link { stroke: var(--border-soft); stroke-width: 1.2px; }
+  .graph-node circle { stroke: var(--surface-1); stroke-width: 1.5px; cursor: pointer; }
+  .graph-node text { fill: var(--muted); font-size: 10px; pointer-events: none; user-select: none; }
+  .graph-node.focused circle { stroke: var(--accent); stroke-width: 2px; }
   .drawer-hidden {
     height: 0px !important;
     opacity: 0;
@@ -186,6 +192,9 @@
       <button data-view="history" class="nav-item flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-left text-muted text-[13px] font-medium whitespace-nowrap">
         <span>History</span>
       </button>
+      <button data-view="graph" class="nav-item flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-left text-muted text-[13px] font-medium whitespace-nowrap">
+        <span>Dependency graph</span>
+      </button>
     </nav>
   </div>
 </header>
@@ -230,6 +239,7 @@
             </div>
             <div class="mono text-3xl font-semibold" id="stat-orphans">–</div>
             <div class="text-[12.5px] text-muted mt-1.5">no longer required</div>
+            <button id="remove-orphans-btn" class="hidden mt-3 w-full text-[11px] font-medium px-3 py-1.5 rounded-lg border transition-colors" style="background: var(--red-dim); color: var(--red); border-color: var(--red);">Remove orphaned packages</button>
           </div>
         </div>
 
@@ -308,6 +318,33 @@
         <div class="space-y-2.5" id="history-list"></div>
       </section>
 
+      <!-- DEPENDENCY GRAPH -->
+      <section id="view-graph" class="fade-view hidden">
+        <div class="mb-4 flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 class="text-2xl font-bold tracking-tight">Dependency graph</h1>
+            <p class="text-muted text-[13.5px] mt-1.5">Click a node to expand what it depends on and what depends on it. Drag nodes, scroll to zoom.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input id="graph-root-input" list="graph-pkg-list" type="text" placeholder="Focus a package…" class="mono text-[12px] surface-2 border border-line rounded-lg px-3 py-2 w-56">
+            <datalist id="graph-pkg-list"></datalist>
+            <button id="graph-reset-btn" class="text-[12px] font-medium px-3 py-2 rounded-lg surface-2 border border-line text-muted hover:text-text transition-colors">Reset</button>
+          </div>
+        </div>
+        <div class="surface card rounded-2xl overflow-hidden relative" id="graph-container" style="height: 620px;">
+          <svg id="graph-svg" class="w-full h-full"></svg>
+          <div id="graph-empty" class="absolute inset-0 flex items-center justify-center text-muted text-[13px] pointer-events-none px-6 text-center">
+            Pick a package above (or hit "Graph" on one in the Installed tab) to start exploring its dependency graph.
+          </div>
+          <div id="graph-legend" class="absolute bottom-3 left-3 flex items-center gap-3 text-[11px] text-muted-2 hidden">
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full inline-block" style="background: var(--accent);"></span>Focused</span>
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full inline-block" style="background: var(--green);"></span>Explicit</span>
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full inline-block" style="background: var(--muted-2);"></span>Dependency</span>
+          </div>
+          <div id="graph-node-detail" class="absolute top-3 right-3 w-64 surface-2 border border-line rounded-xl p-3.5 hidden text-[12px]"></div>
+        </div>
+      </section>
+
   </div>
 </main>
 
@@ -326,6 +363,7 @@
   </div>
 </div>
 
+<script src="vendor/d3.v7.min.js"></script>
 <script>
 const API = '';
 const WS = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
@@ -344,7 +382,10 @@ const state = {
   searchDebounce: null,
   // New state for progress tracking
   currentDownloadProgress: {},
-  currentInstallProgress: {}
+  currentInstallProgress: {},
+  // Dependency graph
+  installedNames: new Set(), // populated from /api/installed, for datalist + explicit/dep coloring
+  explicitNames: new Set(),
 };
 
 // ------------------------------------------------------------- fetch helpers
@@ -364,6 +405,7 @@ async function loadStatus() {
     document.getElementById('stat-installed').textContent = s.installed_total ?? '–';
     document.getElementById('stat-explicit').textContent = s.installed_explicit ?? '–';
     document.getElementById('stat-orphans').textContent = s.orphans ?? '–';
+    document.getElementById('remove-orphans-btn').classList.toggle('hidden', !s.orphans);
     setConn(true);
   } catch (e) {
     setConn(false);
@@ -423,6 +465,9 @@ async function loadInstalled() {
     const results = data.results || [];
     const explicit = results.filter(p => p.explicit).length;
     subtitle.textContent = `${results.length} packages · ${explicit} explicitly installed`;
+    state.installedNames = new Set(results.map(p => p.name));
+    state.explicitNames = new Set(results.filter(p => p.explicit).map(p => p.name));
+    populateGraphDatalist();
     listEl.innerHTML = results.map(p => `
       <div class="pkg-row flex items-center gap-3 px-5 py-3.5">
         <div class="flex-1 min-w-0">
@@ -432,10 +477,17 @@ async function loadInstalled() {
           </div>
           <div class="mono text-[11px] text-muted-2 mt-0.5">${escapeHtml(p.version)}</div>
         </div>
+        <button class="graph-btn text-[11px] px-2.5 py-1.5 rounded-lg surface-3 border border-line text-muted shrink-0 hover:text-[var(--accent)] hover:border-[var(--accent-dim)] transition-colors" data-name="${escapeHtml(p.name)}" title="View in dependency graph">Graph</button>
         <button class="remove-btn text-[11px] px-2.5 py-1.5 rounded-lg surface-3 border border-line text-muted shrink-0 hover:text-[var(--red)] hover:border-[var(--red-dim)] transition-colors" data-name="${escapeHtml(p.name)}">Remove</button>
       </div>`).join('');
     document.querySelectorAll('.remove-btn').forEach(btn => {
       btn.addEventListener('click', () => removePackage(btn.dataset.name));
+    });
+    document.querySelectorAll('.graph-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        switchView('graph');
+        focusGraph(btn.dataset.name);
+      });
     });
   } catch (e) {
     listEl.innerHTML = `<div class="px-5 py-6 text-[13px]" style="color: var(--red);">${escapeHtml(e.message)}</div>`;
@@ -900,6 +952,14 @@ document.getElementById('clean-aur-cache-btn').addEventListener('click', () => {
   });
 });
 
+document.getElementById('remove-orphans-btn').addEventListener('click', () => {
+  openDrawer('Removing orphaned packages…');
+  runSocket('/ws/remove_orphans', null, () => {
+    setDrawerStatus('done', 'Transaction log — completed');
+    loadStatus(); loadInstalled(); loadHistory();
+  });
+});
+
 document.getElementById('apply-btn').addEventListener('click', () => {
   const install = [...state.selectedInstall];
   const aurInstall = [...state.selectedAurInstall];
@@ -1148,6 +1208,224 @@ function removePackage(name) {
     loadInstalled(); loadHistory(); loadStatus();
   });
 }
+
+// --------------------------------------------------------- dependency graph
+//
+// A click-to-expand local graph (Obsidian's "local graph" mode, not its
+// default everything-at-once global view) — with ~2000+ installed packages
+// and dense fan-out (glibc etc.), rendering the whole install as one graph
+// would be an unreadable, unusably slow blob. Instead you focus a package
+// and click nodes to expand their neighbors one hop at a time, reusing the
+// same /api/package_info endpoint the Updates detail rows already use.
+
+const GRAPH_FANOUT_LIMIT = 20;
+
+const graphState = {
+  nodes: new Map(),   // name -> {id, x, y, degree}
+  links: [],           // {source, target} meaning "source depends on target"
+  rootName: null,
+  simulation: null,
+  svg: null,
+  zoomLayer: null,
+  linkLayer: null,
+  nodeLayer: null,
+  linkSel: null,
+  nodeSel: null,
+  initialized: false,
+};
+
+function populateGraphDatalist() {
+  const list = document.getElementById('graph-pkg-list');
+  list.innerHTML = [...state.installedNames].sort().map(n => `<option value="${escapeHtml(n)}">`).join('');
+}
+
+function graphContainerSize() {
+  const el = document.getElementById('graph-container');
+  return { width: el.clientWidth || 600, height: el.clientHeight || 620 };
+}
+
+function initGraphSvg() {
+  if (graphState.initialized) return;
+  graphState.initialized = true;
+
+  const svg = d3.select('#graph-svg');
+  graphState.svg = svg;
+  graphState.zoomLayer = svg.append('g').attr('class', 'zoom-layer');
+  graphState.linkLayer = graphState.zoomLayer.append('g').attr('class', 'links');
+  graphState.nodeLayer = graphState.zoomLayer.append('g').attr('class', 'nodes');
+
+  const zoom = d3.zoom()
+    .scaleExtent([0.2, 4])
+    .on('zoom', event => graphState.zoomLayer.attr('transform', event.transform));
+  svg.call(zoom);
+
+  graphState.simulation = d3.forceSimulation()
+    .force('link', d3.forceLink().id(d => d.id).distance(70).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(-220))
+    .force('collide', d3.forceCollide(24))
+    .force('center', d3.forceCenter())
+    .on('tick', graphTick);
+}
+
+function graphTick() {
+  if (graphState.linkSel) {
+    graphState.linkSel
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+  }
+  if (graphState.nodeSel) {
+    graphState.nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+  }
+}
+
+function nodeColor(d) {
+  if (d.id === graphState.rootName) return 'var(--accent)';
+  return state.explicitNames.has(d.id) ? 'var(--green)' : 'var(--muted-2)';
+}
+
+function nodeRadius(d) {
+  return Math.min(6 + Math.sqrt(d.degree || 1) * 2.5, 22);
+}
+
+function ensureGraphNode(name) {
+  let n = graphState.nodes.get(name);
+  if (!n) {
+    const { width, height } = graphContainerSize();
+    n = { id: name, degree: 0, x: width / 2 + (Math.random() - 0.5) * 60, y: height / 2 + (Math.random() - 0.5) * 60 };
+    graphState.nodes.set(name, n);
+  }
+  return n;
+}
+
+function addGraphLink(sourceName, targetName) {
+  if (sourceName === targetName) return;
+  const exists = graphState.links.some(l =>
+    (l.source.id || l.source) === sourceName && (l.target.id || l.target) === targetName);
+  if (!exists) graphState.links.push({ source: sourceName, target: targetName });
+}
+
+function recomputeGraphDegrees() {
+  graphState.nodes.forEach(n => { n.degree = 0; });
+  graphState.links.forEach(l => {
+    const s = graphState.nodes.get(l.source.id || l.source);
+    const t = graphState.nodes.get(l.target.id || l.target);
+    if (s) s.degree++;
+    if (t) t.degree++;
+  });
+}
+
+function renderGraph(reheat) {
+  const nodes = [...graphState.nodes.values()];
+  const links = graphState.links;
+
+  let linkSel = graphState.linkLayer.selectAll('line')
+    .data(links, d => `${d.source.id || d.source}->${d.target.id || d.target}`);
+  linkSel.exit().remove();
+  graphState.linkSel = linkSel.enter().append('line').attr('class', 'graph-link').merge(linkSel);
+
+  let nodeSel = graphState.nodeLayer.selectAll('g.graph-node').data(nodes, d => d.id);
+  nodeSel.exit().remove();
+  const nodeEnter = nodeSel.enter().append('g').attr('class', 'graph-node');
+  nodeEnter.append('circle');
+  nodeEnter.append('text').attr('text-anchor', 'middle');
+  nodeEnter.on('click', (event, d) => {
+    event.stopPropagation();
+    expandGraphNode(d.id);
+  });
+  nodeEnter.call(d3.drag()
+    .on('start', graphDragStarted)
+    .on('drag', graphDragged)
+    .on('end', graphDragEnded));
+
+  graphState.nodeSel = nodeEnter.merge(nodeSel);
+  graphState.nodeSel.classed('focused', d => d.id === graphState.rootName);
+  graphState.nodeSel.select('circle').attr('r', nodeRadius).attr('fill', nodeColor);
+  graphState.nodeSel.select('text').text(d => d.id).attr('dy', d => -(nodeRadius(d) + 4));
+
+  const { width, height } = graphContainerSize();
+  graphState.simulation.force('center', d3.forceCenter(width / 2, height / 2));
+  graphState.simulation.nodes(nodes);
+  graphState.simulation.force('link').links(links);
+  graphState.simulation.alpha(reheat ? 0.7 : 0.3).restart();
+}
+
+function graphDragStarted(event, d) {
+  if (!event.active) graphState.simulation.alphaTarget(0.3).restart();
+  d.fx = d.x; d.fy = d.y;
+  document.getElementById('graph-svg').classList.add('dragging');
+}
+function graphDragged(event, d) {
+  d.fx = event.x; d.fy = event.y;
+}
+function graphDragEnded(event, d) {
+  if (!event.active) graphState.simulation.alphaTarget(0);
+  d.fx = null; d.fy = null;
+  document.getElementById('graph-svg').classList.remove('dragging');
+}
+
+async function focusGraph(name) {
+  initGraphSvg();
+  document.getElementById('graph-root-input').value = name;
+  document.getElementById('graph-empty').classList.add('hidden');
+  document.getElementById('graph-legend').classList.remove('hidden');
+  graphState.rootName = name;
+  ensureGraphNode(name);
+  renderGraph(true);
+  await expandGraphNode(name);
+}
+
+async function expandGraphNode(name) {
+  let info = state.packageInfoCache.get(name);
+  if (!info || info === 'loading' || info instanceof Error) {
+    try {
+      info = await getJSON('/api/package_info?name=' + encodeURIComponent(name));
+      state.packageInfoCache.set(name, info);
+    } catch (e) {
+      showGraphDetail(name, null, e);
+      return;
+    }
+  }
+  ensureGraphNode(name);
+  const depends = (info.depends || []).slice(0, GRAPH_FANOUT_LIMIT).map(depBaseName);
+  const requiredBy = (info.required_by || []).slice(0, GRAPH_FANOUT_LIMIT).map(depBaseName);
+  depends.forEach(dep => { ensureGraphNode(dep); addGraphLink(name, dep); });
+  requiredBy.forEach(req => { ensureGraphNode(req); addGraphLink(req, name); });
+  recomputeGraphDegrees();
+  renderGraph(true);
+  showGraphDetail(name, info, null);
+}
+
+function showGraphDetail(name, info, err) {
+  const el = document.getElementById('graph-node-detail');
+  el.classList.remove('hidden');
+  if (err) {
+    el.innerHTML = `<div class="font-semibold text-[13px] mb-1">${escapeHtml(name)}</div><div style="color: var(--red);">${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="font-semibold text-[13px] mb-1">${escapeHtml(name)}</div>
+    <div class="mono text-muted-2 text-[11px] mb-2">${escapeHtml(info.version || '')}</div>
+    <div class="text-muted mb-2">${escapeHtml(info.description || '—')}</div>
+    <div class="text-muted-2 text-[11px]">${(info.depends || []).length} depends on · ${(info.required_by || []).length} required by</div>`;
+}
+
+function resetGraph() {
+  graphState.nodes = new Map();
+  graphState.links = [];
+  graphState.rootName = null;
+  document.getElementById('graph-root-input').value = '';
+  document.getElementById('graph-empty').classList.remove('hidden');
+  document.getElementById('graph-legend').classList.add('hidden');
+  document.getElementById('graph-node-detail').classList.add('hidden');
+  if (graphState.initialized) renderGraph(false);
+}
+
+document.getElementById('graph-root-input').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const name = e.target.value.trim();
+  if (name) focusGraph(name);
+});
+document.getElementById('graph-reset-btn').addEventListener('click', resetGraph);
 
 // ------------------------------------------------------------------ init
 

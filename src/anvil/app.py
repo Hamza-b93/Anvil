@@ -19,6 +19,7 @@ Privileged actions (prompt via polkit's pkexec, never store a password):
   WS   /ws/refresh_keyrings    pkexec pacman-key --refresh-keys / pacman -Sy archlinux-keyring
   WS   /ws/apply                pkexec pacman -Syu / -S <pkgs>
   WS   /ws/remove              pkexec pacman -R <pkgs>
+  WS   /ws/remove_orphans      pkexec pacman -Rns <orphan pkgs, via pacman -Qtdq>
   WS   /ws/aur_install        yay -S <pkgs>
   WS   /ws/aur_remove        yay -R <pkgs>
   WS   /ws/clean_cache        pkexec paccache -rk1 (old repo package cache)
@@ -693,6 +694,26 @@ async def ws_remove(ws: WebSocket):
     if pkgs:
         await stream_process(ws, ["pkexec", "pacman", "-R", *pkgs])
 
+    await ws.close()
+
+
+@app.websocket("/ws/remove_orphans")
+async def ws_remove_orphans(ws: WebSocket):
+    """
+    Removes every "orphan" (a dependency-installed package nothing else
+    requires anymore, per `pacman -Qtdq`) in one shot via -Rns: -n also
+    drops now-unneeded config files, -s recurses so removing one orphan
+    that itself frees up further orphans doesn't need a second run.
+    """
+    await ws.accept()
+    rc, out, _ = run_cmd(["pacman", "-Qtdq"])
+    orphans = [l.strip() for l in out.strip().splitlines() if l.strip()] if rc == 0 else []
+    if orphans:
+        await stream_process(ws, ["pkexec", "pacman", "-Rns", *orphans])
+    else:
+        await ws.send_json({"type": "start", "cmd": "pacman -Rns (no orphans)"})
+        await ws.send_json({"type": "line", "text": "No orphaned packages to remove."})
+        await ws.send_json({"type": "done", "returncode": 0})
     await ws.close()
 
 # ----------------------------------------------- aur privileged actions

@@ -6,6 +6,29 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.4] — 2026-08-13
+
+### Added
+- **Interactive dependency graph.** A new "Dependency graph" tab renders
+  an Obsidian-style local graph of installed packages: focus a package (by
+  search, or a "Graph" button on any row in Installed) and click nodes to
+  expand what they depend on and what depends on them, one hop at a time.
+  Nodes are draggable, the canvas is zoomable/pannable, node size scales
+  with connection count, and color distinguishes the focused package,
+  explicitly-installed packages, and pulled-in dependencies. Expansion is
+  capped at 20 neighbors per direction per click so a heavily-depended-on
+  package like `glibc` doesn't blow up the layout. Built on `d3-force`
+  (vendored locally under `frontend/vendor/`, no CDN at runtime) and reuses
+  the existing `/api/package_info` endpoint — no new backend endpoint
+  needed.
+- **Remove orphaned packages.** The dashboard's "Orphaned packages" stat
+  card now shows a "Remove orphaned packages" button whenever the count is
+  above zero. `/ws/remove_orphans` re-checks the orphan list live via
+  `pacman -Qtdq` right before acting (never trusts a stale count) and
+  removes them with `pkexec pacman -Rns`, `-s` so a package that becomes
+  orphaned by the same removal is swept up in one run instead of needing a
+  second pass.
+
 ## [0.7.3] — 2026-08-13
 
 ### Changed

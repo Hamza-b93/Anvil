@@ -67,7 +67,8 @@ anvil/
 │   ├── app.py              FastAPI app — read endpoints + WebSocket actions
 │   ├── cli.py               `anvil-manager` console-script entry point
 │   └── frontend/
-│       └── index.html       Tailwind UI, talks to the backend via fetch/WS
+│       ├── index.html       Tailwind UI, talks to the backend via fetch/WS
+│       └── vendor/           Locally-vendored third-party JS (d3, no CDN)
 ├── packaging/
 │   └── PKGBUILD             Arch package build recipe
 ├── pyproject.toml           Package metadata, dependencies, entry point
