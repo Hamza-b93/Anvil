@@ -6,6 +6,14 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.6] — 2024-08-20
+
+### Changed
+- **Application now prompts for port number.** The `anvil-manager` command
+  now prompts the user to enter a port number when starting the server.
+  If no input is provided, it defaults to 8000. The application will
+  validate the input to ensure it's a valid port number between 1 and 65535.
+
 ## [0.7.5] — 2026-08-14
 
 ### Added
