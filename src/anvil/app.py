@@ -19,6 +19,8 @@ Read-only endpoints (no privilege needed):
 Privileged actions (prompt via polkit's pkexec, never store a password):
   WS   /ws/sync                pkexec pacman -Sy
   WS   /ws/refresh_keyrings    pkexec pacman-key --refresh-keys / pacman -Sy archlinux-keyring
+  WS   /ws/refresh_arch_mirrors    rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist
+  WS   /ws/refresh_chaotic_mirrors    rate-mirrors chaotic-aur | sudo tee /etc/pacman.d/chaotic-mirrorlist
   WS   /ws/apply                pkexec pacman -Syu / -S <pkgs>
   WS   /ws/remove              pkexec pacman -R <pkgs>
   WS   /ws/remove_orphans      pkexec pacman -Rns <orphan pkgs, via pacman -Qtdq>
@@ -798,31 +800,49 @@ async def ws_clean_aur_cache(ws: WebSocket):
     await ws.close()
 
 
-# ----------------------------------------------- mirror refresh action
-@app.websocket("/ws/refresh_mirrors")
-async def ws_refresh_mirrors(ws: WebSocket):
+# ----------------------------------------------- mirror refresh actions
+@app.websocket("/ws/refresh_arch_mirrors")
+async def ws_refresh_arch_mirrors(ws: WebSocket):
     """
-    Refresh mirrors for both arch repos and chaotic-aur if installed.
-    Uses rate-mirrors to generate new mirrorlists and replaces the system ones.
+    Refresh the Arch repository mirror list via rate-mirrors.
     """
     await ws.accept()
     try:
-        # First check if rate-mirrors is installed
         rc, _, _ = run_cmd(["which", "rate-mirrors"])
         if rc != 0:
             await ws.send_json({"type": "line", "text": "rate-mirrors is not installed. Please install it with: pacman -S rate-mirrors"})
             await ws.send_json({"type": "done", "returncode": 1})
             return
-            
-        # Refresh arch mirrors
+
         await ws.send_json({"type": "start", "cmd": "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"})
         await stream_process(ws, ["sh", "-c", "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"])
-        
-        # Check if chaotic-aur is configured and refresh its mirrors too
-        if os.path.exists("/etc/pacman.d/chaotic-mirrorlist"):
-            await ws.send_json({"type": "start", "cmd": "rate-mirrors chaotic-aur | sudo tee /etc/pacman.d/chaotic-mirrorlist"})
-            await stream_process(ws, ["sh", "-c", "rate-mirrors chaotic-aur | sudo tee /etc/pacman.d/chaotic-mirrorlist"])
-        
+        await ws.send_json({"type": "done", "returncode": 0})
+    except WebSocketDisconnect:
+        return
+    finally:
+        await ws.close()
+
+
+@app.websocket("/ws/refresh_chaotic_mirrors")
+async def ws_refresh_chaotic_mirrors(ws: WebSocket):
+    """
+    Refresh the Chaotic-AUR mirror list via rate-mirrors.
+    """
+    await ws.accept()
+    try:
+        if not os.path.exists("/etc/pacman.d/chaotic-mirrorlist"):
+            await ws.send_json({"type": "line", "text": "Chaotic-AUR mirrorlist not found. Is chaotic-aur configured?"})
+            await ws.send_json({"type": "done", "returncode": 1})
+            return
+
+        rc, _, _ = run_cmd(["which", "rate-mirrors"])
+        if rc != 0:
+            await ws.send_json({"type": "line", "text": "rate-mirrors is not installed. Please install it with: pacman -S rate-mirrors"})
+            await ws.send_json({"type": "done", "returncode": 1})
+            return
+
+        await ws.send_json({"type": "start", "cmd": "rate-mirrors chaotic-aur | sudo tee /etc/pacman.d/chaotic-mirrorlist"})
+        await stream_process(ws, ["sh", "-c", "rate-mirrors chaotic-aur | sudo tee /etc/pacman.d/chaotic-mirrorlist"])
         await ws.send_json({"type": "done", "returncode": 0})
     except WebSocketDisconnect:
         return
