@@ -407,7 +407,7 @@ async def exit_app():
 # previously could queue a stray reply into stdin that then got silently
 # consumed by the next *real* prompt instead of the one the user answered.
 _PROMPT_IDLE_SECONDS = 0.4
-_PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|[?:]|(?:\(\^?\d+\s*)|\d+-\d+|\s*,\s*)+\))\s*$")
+_PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|[?:]|(?:\(\^?\d+\s*\)|\d+-\d+|\s*,\s*)+)\s*$")
 
 # yay shells out to plain `sudo` (not pkexec) for the final install step of
 # an AUR build. sudo's password prompt is written directly to /dev/tty,

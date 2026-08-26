@@ -6,7 +6,7 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
-## [0.7.6] — 2024-08-26
+## [0.7.7] — 2024-08-26
 
 ### Added
 - **Refresh mirrors functionality.** Added a new button in the UI to refresh pacman mirror lists using `rate-mirrors` for both arch and chaotic-aur repositories.
@@ -21,6 +21,15 @@ reconstructed here beyond what's implied by the 0.5.0 entry below.
 ### Fixed
 - **Fixed overlapping CLI output.** Resolved issue where the CLI output section was overlapping the package list.
 - **Fixed permanent collapse issue.** Fixed the collapse functionality so the CLI section can be toggled open and closed repeatedly.
+- **Fixed regex syntax error.** Corrected unbalanced parenthesis in the prompt detection regex pattern.
+
+## [0.7.6] — 2024-08-20
+
+### Changed
+- **Application now prompts for port number.** The `anvil-manager` command
+  now prompts the user to enter a port number when starting the server.
+  If no input is provided, it defaults to 8000. The application will
+  validate the input to ensure it's a valid port number between 1 and 65535.
 
 ## [0.7.5] — 2026-08-14
 
