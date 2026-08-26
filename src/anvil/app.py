@@ -407,7 +407,7 @@ async def exit_app():
 # previously could queue a stray reply into stdin that then got silently
 # consumed by the next *real* prompt instead of the one the user answered.
 _PROMPT_IDLE_SECONDS = 0.4
-_PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|:)\s*$")
+_PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|[?:]|(?:\(\^?\d+\s*)|\d+-\d+|\s*,\s*)+\))\s*$")
 
 # yay shells out to plain `sudo` (not pkexec) for the final install step of
 # an AUR build. sudo's password prompt is written directly to /dev/tty,
@@ -423,34 +423,18 @@ _PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|:)\s*$")
 # down that socket for the script to hand to sudo. The password only ever
 # exists in this process's memory and the browser tab — never on disk,
 # never in argv/env of any process ps could see.
-_ASKPASS_SCRIPT = """#!/usr/bin/env python3
-import os, socket, sys
+_ASKPASS_SCRIPT = '''#!/usr/bin/env python3
+import os
+import socket
+import sys
 
-def main():
-    sock_path = os.environ.get("ANVIL_ASKPASS_SOCK")
-    if not sock_path:
-        sys.exit(1)
-    prompt = sys.argv[1] if len(sys.argv) > 1 else "Password:"
-    try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(5)
-        s.connect(sock_path)
-        s.settimeout(None)
-        s.sendall(prompt.encode() + b"\\n")
-        buf = b""
-        while not buf.endswith(b"\\n"):
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            buf += chunk
-        sys.stdout.write(buf.decode(errors="ignore").rstrip("\\n"))
-        sys.stdout.flush()
-    except OSError:
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-"""
+sock_path = os.environ["ANVIL_ASKPASS_SOCK"]
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+    sock.connect(sock_path)
+    sock.send(sys.argv[1].encode() + b"\\n")
+    response = sock.recv(1024)
+    sys.stdout.buffer.write(response)
+'''
 
 
 async def stream_process(ws: WebSocket, cmd: list[str]):
@@ -813,6 +797,37 @@ async def ws_clean_aur_cache(ws: WebSocket):
     await stream_process(ws, ["yay", "-Sc"])
     await ws.close()
 
+
+# ----------------------------------------------- mirror refresh action
+@app.websocket("/ws/refresh_mirrors")
+async def ws_refresh_mirrors(ws: WebSocket):
+    """
+    Refresh mirrors for both arch repos and chaotic-aur if installed.
+    Uses rate-mirrors to generate new mirrorlists and replaces the system ones.
+    """
+    await ws.accept()
+    try:
+        # First check if rate-mirrors is installed
+        rc, _, _ = run_cmd(["which", "rate-mirrors"])
+        if rc != 0:
+            await ws.send_json({"type": "line", "text": "rate-mirrors is not installed. Please install it with: pacman -S rate-mirrors"})
+            await ws.send_json({"type": "done", "returncode": 1})
+            return
+            
+        # Refresh arch mirrors
+        await ws.send_json({"type": "start", "cmd": "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"})
+        await stream_process(ws, ["sh", "-c", "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist"])
+        
+        # Check if chaotic-aur is configured and refresh its mirrors too
+        if os.path.exists("/etc/pacman.d/chaotic-mirrorlist"):
+            await ws.send_json({"type": "start", "cmd": "rate-mirrors chaotic-aur | sudo tee /etc/pacman.d/chaotic-mirrorlist"})
+            await stream_process(ws, ["sh", "-c", "rate-mirrors chaotic-aur | sudo tee /etc/pacman.d/chaotic-mirrorlist"])
+        
+        await ws.send_json({"type": "done", "returncode": 0})
+    except WebSocketDisconnect:
+        return
+    finally:
+        await ws.close()
 
 # Static frontend last, so it never shadows the /api and /ws routes above.
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

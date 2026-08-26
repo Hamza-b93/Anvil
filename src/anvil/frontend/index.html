@@ -158,6 +158,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="clean-aur-cache-icon"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"/></svg>
         <span class="hidden sm:inline">Clean AUR cache</span>
       </button>
+      <button id="refresh-mirrors-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0" title="Refresh pacman mirror lists (rate-mirrors arch / chaotic-aur)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="refresh-mirrors-icon"><path d="M17 14v2M17 20v2M9 2v2M5 6V4M3 10h4M3 14h4M21 10h-4M21 14h-4M17 18v2M17 14v2M9 18v2M9 14v2"/></svg>
+        <span class="hidden sm:inline">Refresh mirrors</span>
+      </button>
       <button id="sync-btn" class="flex items-center gap-2 px-3 py-2 rounded-lg surface-2 border border-line text-[12px] text-muted hover:text-text hover:border-[var(--border-soft)] transition-colors shrink-0">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" id="sync-icon"><path d="M21 12a9 9 0 1 1-2.64-6.36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 3v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span class="hidden sm:inline">Sync databases</span>
@@ -963,6 +967,28 @@ document.getElementById('clean-aur-cache-btn').addEventListener('click', () => {
   runSocket('/ws/clean_aur_cache', null, () => {
     icon.classList.remove('spin');
     setDrawerStatus('done', 'Transaction log — AUR cache cleanup complete');
+  });
+});
+
+document.getElementById('refresh-mirrors-btn').addEventListener('click', () => {
+  const icon = document.getElementById('refresh-mirrors-icon');
+  icon.classList.add('spin');
+  openDrawer('Refreshing pacman mirror lists…');
+  runSocket('/ws/refresh_mirrors', null, () => {
+    icon.classList.remove('spin');
+    setDrawerStatus('done', 'Transaction log — mirror refresh complete');
+    loadUpdates(); loadStatus();
+  });
+});
+
+document.getElementById('sync-btn').addEventListener('click', () => {
+  const icon = document.getElementById('sync-icon');
+  icon.classList.add('spin');
+  openDrawer('Syncing repositories…');
+  runSocket('/ws/sync', null, () => {
+    icon.classList.remove('spin');
+    setDrawerStatus('done', 'Transaction log — sync complete');
+    loadUpdates(); loadStatus();
   });
 });
 
