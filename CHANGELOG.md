@@ -5,6 +5,16 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
+app.
+## [0.7.9] — 2024-08-26
+
+### Changed
+- **Updated UI version display.** The version number shown in the UI now matches the actual release version.
+
+## [0.7.8] — 2024-08-26
+
+### Fixed
+- **Fixed regex syntax error.** Corrected unbalanced parenthesis in the prompt detection regex pattern.
 
 ## [0.7.7] — 2024-08-26
 
@@ -21,7 +31,6 @@ reconstructed here beyond what's implied by the 0.5.0 entry below.
 ### Fixed
 - **Fixed overlapping CLI output.** Resolved issue where the CLI output section was overlapping the package list.
 - **Fixed permanent collapse issue.** Fixed the collapse functionality so the CLI section can be toggled open and closed repeatedly.
-- **Fixed regex syntax error.** Corrected unbalanced parenthesis in the prompt detection regex pattern.
 
 ## [0.7.6] — 2024-08-20
 
