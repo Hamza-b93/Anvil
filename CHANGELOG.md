@@ -5,7 +5,23 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
-app.
+
+## [0.7.12] — 2024-08-26
+
+### Changed
+- **Updated UI version display.** The version number shown in the UI now matches the actual release version.
+- **Updated PKGBUILD and .SRCINFO.** Package metadata files have been updated with the correct version and checksum.
+
+## [0.7.11] — 2024-08-26
+
+### Changed
+- **Updated PKGBUILD and .SRCINFO.** Package metadata files have been updated with the correct version and checksum.
+
+## [0.7.10] — 2024-08-26
+
+### Changed
+- **Updated UI version display.** The version number shown in the UI now matches the actual release version.
+
 ## [0.7.9] — 2024-08-26
 
 ### Changed
