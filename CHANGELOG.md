@@ -6,6 +6,12 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.13] — 2026-09-01
+
+### Fixed
+- **Terminal drawer cropping package list.** The fixed-position drawer now adds bottom padding to the main content area when open, preventing it from overlaying the package list.
+- **Terminal drawer could not be re-expanded after manual collapse.** The toggle button was inside the drawer and became inaccessible when collapsed. Moved the toggle outside the drawer so it's always clickable.
+
 ## [0.7.12] — 2024-08-26
 
 ### Changed

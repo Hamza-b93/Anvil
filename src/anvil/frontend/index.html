@@ -313,6 +313,24 @@
             visibility: visible;
         }
 
+        .drawer-toggle-btn {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 30;
+            height: 44px;
+            transition: transform 0.3s ease;
+        }
+
+        .drawer-toggle-btn.collapsed {
+            transform: translateY(calc(100% - 44px));
+        }
+
+        main.has-drawer-open {
+            padding-bottom: 360px;
+        }
+
         .nav-item {
             transition: all 0.15s ease;
             position: relative;
@@ -473,7 +491,7 @@
                         </svg>
                     </div>
                     <span class="font-bold text-[15px] tracking-tight">Anvil</span>
-                    <span class="mono text-[10px] text-muted-2">v0.7.12</span>
+                    <span class="mono text-[10px] text-muted-2">v0.7.13</span>
                 </div>
 
                 <div class="flex-1"></div>
@@ -794,9 +812,25 @@
         </div>
     </main>
 
+    <!-- DRAWER TOGGLE (always visible, outside drawer) -->
+    <button id="drawer-toggle" class="drawer-toggle-btn flex items-center px-5 gap-3 border-t border-line glass justify-center" title="Toggle transaction log">
+      <span id="drawer-status-dot" class="w-2 h-2 rounded-full shrink-0" style="background: var(--muted-2);"></span>
+      <span class="mono text-[12px] text-muted" id="drawer-title">Transaction log — idle</span>
+      <svg id="drawer-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" class="text-muted-2 transition-transform">
+        <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+
     <!-- TERMINAL DRAWER -->
-    <div id="exit-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center"
-        style="background: var(--bg);">
+    <div id="drawer" class="drawer-hidden fixed left-0 right-0 bottom-0 glass border-t border-line z-20"
+        style="height: 0px;">
+      <div class="max-w-6xl mx-auto">
+        <div class="p-4 overflow-y-auto mono text-[12.5px] leading-relaxed" style="height: 296px;"
+            id="terminal-output">
+          <!-- Progress information will be displayed here dynamically -->
+        </div>
+      </div>
+    </div>
         <div class="flex flex-col items-center gap-3 text-center px-6">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 stroke-linecap="round" stroke-linejoin="round" class="text-muted">
@@ -1203,6 +1237,8 @@
             state.currentDrawerTitle = title;
             document.getElementById('drawer').classList.remove('drawer-hidden');
             document.getElementById('drawer').classList.add('drawer-open');
+            document.getElementById('drawer-toggle').classList.remove('collapsed');
+            document.querySelector('main').classList.add('has-drawer-open');
             document.getElementById('drawer-chevron').style.transform = 'rotate(180deg)';
             document.getElementById('terminal-output').innerHTML = '';
             setDrawerStatus('running', title);
@@ -1330,9 +1366,13 @@
 
         document.getElementById('drawer-toggle').addEventListener('click', () => {
             const d = document.getElementById('drawer');
+            const toggleBtn = document.getElementById('drawer-toggle');
+            const mainEl = document.querySelector('main');
             state.drawerOpen = !state.drawerOpen;
             d.classList.toggle('drawer-hidden', !state.drawerOpen);
             d.classList.toggle('drawer-open', state.drawerOpen);
+            toggleBtn.classList.toggle('collapsed', !state.drawerOpen);
+            mainEl.classList.toggle('has-drawer-open', state.drawerOpen);
             document.getElementById('drawer-chevron').style.transform = state.drawerOpen ? 'rotate(180deg)' : 'rotate(0deg)';
         });
 
