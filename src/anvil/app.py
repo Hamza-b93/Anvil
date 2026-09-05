@@ -44,12 +44,17 @@ and is written straight to the subprocess's stdin.
 """
 
 import asyncio
+import fcntl
 import os
+import pty
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import tempfile
+import termios
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -411,6 +416,8 @@ async def exit_app():
 _PROMPT_IDLE_SECONDS = 0.4
 _PROMPT_SHAPE_RE = re.compile(r"(\[(?:Y/n|y/N)\]|==>|[?:]|(?:\(\^?\d+\s*\)|\d+-\d+|\s*,\s*)+)\s*$")
 
+_ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
 # yay shells out to plain `sudo` (not pkexec) for the final install step of
 # an AUR build. sudo's password prompt is written directly to /dev/tty,
 # bypassing stdout/stderr entirely — our output capture below can never see
@@ -468,6 +475,9 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
 
     askpass_dir: str | None = None
     askpass_server = None
+    master_fd: int | None = None
+    child_pid: int | None = None
+    _reader_thread_stop = threading.Event()
     try:
         env = os.environ.copy()
 
@@ -498,24 +508,65 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
             env["SUDO_ASKPASS"] = script_path
             env["ANVIL_ASKPASS_SOCK"] = sock_path
 
+        # ── PTY setup ──────────────────────────────────────────────────────
+        # Using a pseudo-terminal instead of pipes makes the child process
+        # believe it's connected to a real terminal. This is critical for
+        # interactive TUI programs like yay, which can deadlock internally
+        # when isatty() returns false (their threading model expects terminal
+        # semantics and condition-variable signaling that pipes don't provide).
+        master_fd, slave_fd = pty.openpty()
+
+        winsize = struct.pack('HHHH', 24, 80, 0, 0)
+        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+
+        def preexec():
+            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+            os.dup2(slave_fd, 0)
+            os.dup2(slave_fd, 1)
+            os.dup2(slave_fd, 2)
+            if slave_fd > 2:
+                os.close(slave_fd)
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             env=env,
             start_new_session=True,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            preexec_fn=preexec,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        os.close(slave_fd)
+        child_pid = proc.pid
+
+        # A background thread reads the PTY master fd and pushes chunks into
+        # an asyncio queue. This avoids blocking the event loop on reads of a
+        # raw fd that asyncio's pipe protocol doesn't natively support.
+        output_queue: asyncio.Queue = asyncio.Queue()
+
+        def read_pty_master():
+            try:
+                while not _reader_thread_stop.is_set():
+                    try:
+                        data = os.read(master_fd, 4096)
+                    except OSError:
+                        break
+                    if not data:
+                        break
+                    asyncio.run_coroutine_threadsafe(
+                        output_queue.put(data), asyncio.get_event_loop()
+                    )
+            finally:
+                asyncio.run_coroutine_threadsafe(
+                    output_queue.put(None), asyncio.get_event_loop()
+                )
+
+        pty_thread = threading.Thread(target=read_pty_master, daemon=True)
+        pty_thread.start()
 
         # Regex patterns for parsing progress
-        # Download progress: [####################] 100%
         download_progress_pattern = re.compile(r'\[(#+|\.+)\]\s*(\d+%)')
-        # Installation progress: (1/3) package_name: installing package_version...
-        # Or general progress: processing package_name...
-        # Or specific package actions: checking keys...
-        # We'll focus on the "(X/Y)" pattern and "installing" for now
         install_progress_pattern = re.compile(r'\((\d+)/(\d+)\)\s*(.+?):\s*(installing|checking|downloading)')
-        # Generic package processing: Processing package_name...
         generic_package_pattern = re.compile(r'(processing|checking keys|loading packages|resolving dependencies|looking for conflicting packages|installing|checking|arming|upgrading|removing|reinstalling)\s+(.+?)\.{3}')
 
         current_download_pkg = None
@@ -525,19 +576,21 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
         async def handle_line(line: str):
             nonlocal current_download_pkg, current_install_pkg, total_to_install
 
-            # Attempt to parse download progress
-            dl_match = download_progress_pattern.search(line)
-            inst_match = install_progress_pattern.search(line)
-            gen_match = generic_package_pattern.search(line.lower())
+            # Strip ANSI escape sequences — the PTY emits terminal control
+            # codes (colors, cursor movement) that are meaningless in the UI.
+            clean = _ANSI_ESCAPE.sub('', line)
 
-            # Send a progress update message if we detect a change
+            dl_match = download_progress_pattern.search(clean)
+            inst_match = install_progress_pattern.search(clean)
+            gen_match = generic_package_pattern.search(clean.lower())
+
             progress_update = {"type": "progress"}
 
             if dl_match:
                 progress_update["download"] = {"current": dl_match.group(1), "percent": dl_match.group(2)}
-                if gen_match and gen_match.group(2):  # Capture the package name if available
-                     current_download_pkg = gen_match.group(2)
-                     progress_update["download"]["package"] = current_download_pkg
+                if gen_match and gen_match.group(2):
+                    current_download_pkg = gen_match.group(2)
+                    progress_update["download"]["package"] = current_download_pkg
 
             elif inst_match:
                 num_current = int(inst_match.group(1))
@@ -545,7 +598,6 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                 pkg_name = inst_match.group(3)
                 action_type = inst_match.group(4)
 
-                # Update total count if not already set and this is a start
                 if total_to_install == 0 and num_total > 0:
                     total_to_install = num_total
 
@@ -554,58 +606,46 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                     "current_num": num_current,
                     "total_num": total_to_install,
                     "package": pkg_name,
-                    "action": action_type
+                    "action": action_type,
                 }
 
             elif gen_match:
-                 # Generic package action, useful for showing what's happening
-                 action_type = gen_match.group(1)
-                 pkg_name = gen_match.group(2)
-                 if action_type in ["installing", "upgrading", "removing", "reinstalling"]:
-                      # Assume this is the next package in sequence if we don't have specific (X/Y) info yet
-                      if not current_install_pkg or current_install_pkg != pkg_name:
-                          current_install_pkg = pkg_name
-                          # Estimate progress if we don't have exact numbers
-                          if total_to_install == 0:
-                              progress_update["install"] = {
-                                  "current_num": "?",
-                                  "total_num": "?",
-                                  "package": pkg_name,
-                                  "action": action_type,
-                                  "estimated": True
-                              }
-                          else:
-                              # Try to estimate current number based on the package name order
-                              # This is a simplification, (X/Y) from logs is better
-                              progress_update["install"] = {
-                                  "current_num": "estimating...",
-                                  "total_num": total_to_install,
-                                  "package": pkg_name,
-                                  "action": action_type,
-                                  "estimated": True
-                              }
+                action_type = gen_match.group(1)
+                pkg_name = gen_match.group(2)
+                if action_type in ["installing", "upgrading", "removing", "reinstalling"]:
+                    if not current_install_pkg or current_install_pkg != pkg_name:
+                        current_install_pkg = pkg_name
+                        if total_to_install == 0:
+                            progress_update["install"] = {
+                                "current_num": "?",
+                                "total_num": "?",
+                                "package": pkg_name,
+                                "action": action_type,
+                                "estimated": True,
+                            }
+                        else:
+                            progress_update["install"] = {
+                                "current_num": "estimating...",
+                                "total_num": total_to_install,
+                                "package": pkg_name,
+                                "action": action_type,
+                                "estimated": True,
+                            }
 
-            # If we captured any progress info, send the update
-            if len(progress_update) > 1:  # More than just the type
-                 await ws.send_json(progress_update)
+            if len(progress_update) > 1:
+                await ws.send_json(progress_update)
 
-            # Always send the raw line as well for full output
-            await ws.send_json({"type": "line", "text": line})
+            await ws.send_json({"type": "line", "text": clean})
 
         buffer = b""
         while True:
             try:
-                chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=_PROMPT_IDLE_SECONDS)
+                chunk = await asyncio.wait_for(
+                    output_queue.get(), timeout=_PROMPT_IDLE_SECONDS
+                )
             except asyncio.TimeoutError:
-                # Nothing arrived in time. That alone doesn't mean pacman/yay
-                # is blocked on a read() of its own waiting for us to answer
-                # — it may just still be computing (resolving dependencies,
-                # verifying signatures). Only treat it as a real prompt if
-                # the leftover text also has the shape of one; otherwise
-                # keep waiting instead of misreading thinking time as an
-                # unanswered question.
                 if not buffer or not _PROMPT_SHAPE_RE.search(
-                    buffer.decode(errors="ignore").rstrip()
+                    _ANSI_ESCAPE.sub('', buffer.decode(errors="ignore")).rstrip()
                 ):
                     continue
                 prompt_text = buffer.decode(errors="ignore")
@@ -618,13 +658,13 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                     await proc.wait()
                     return
                 answer = (reply.get("answer") or "").strip()
-                proc.stdin.write((answer + "\n").encode())
-                await proc.stdin.drain()
+                os.write(master_fd, (answer + "\n").encode())
                 await handle_line(prompt_text + answer)
                 continue
 
-            if not chunk:
+            if chunk is None:
                 break
+
             buffer += chunk
             while b"\n" in buffer:
                 line_bytes, buffer = buffer.split(b"\n", 1)
@@ -642,6 +682,12 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
         await ws.send_json({"type": "line", "text": f"error: {exc}"})
         await ws.send_json({"type": "done", "returncode": 1})
     finally:
+        _reader_thread_stop.set()
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
         _active_transactions -= 1
         reader_task.cancel()
         if askpass_server is not None:

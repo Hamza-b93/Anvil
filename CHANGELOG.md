@@ -6,6 +6,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.14] — 2026-09-05
+
+### Fixed
+- **yay subprocess deadlock when launching AUR updates.** `yay -Sua` (and other yay commands) would hang indefinitely with all threads blocked on `futex(FUTEX_WAIT_PRIVATE)` because `isatty()` returned false for pipe/socketpair file descriptors. Replaced pipe-based I/O with a pseudo-terminal (PTY): the child now sees a real terminal, yay's internal threading for parallel AUR queries and libalpm operations no longer deadlocks on un-signaled condition variables.
+- **ANSI escape codes leaking into UI output.** PTY output includes terminal control sequences (colors, cursor movement). These are now stripped before sending lines to the browser.
+
+### Changed
+- Subprocess I/O in `stream_process()`: `pty.openpty()` → `preexec_fn` wires slave fd to child's stdin/stdout/stderr; daemon thread reads master fd and feeds `asyncio.Queue`.
+
 ## [0.7.13] — 2026-09-01
 
 ### Fixed
