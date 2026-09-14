@@ -452,11 +452,25 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
     loop = asyncio.get_running_loop()
     await ws.send_json({"type": "start", "cmd": " ".join(cmd)})
 
-    # A single dedicated reader serializes every inbound WebSocket message
-    # into one queue, so the two things that can ask the browser a question
-    # here — a pacman/yay text prompt, and a sudo password request relayed
-    # via the askpass socket below — never race each other calling
-    # ws.receive_json() concurrently on the same connection.
+    # Polkit (pkexec) can return "not authorized" before the password
+    # prompt appears due to a race in polkit's auth cache. Retry once
+    # on these transient failures so the user isn't stuck.
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            await asyncio.sleep(0.5)
+            await ws.send_json({"type": "start", "cmd": " ".join(cmd)})
+
+        last_rc, had_polkit_auth_failure = await _run_process(ws, cmd, loop)
+        if last_rc != 127:
+            break
+
+        # Only retry on polkit-style auth failures, not other exit 127s.
+        if not had_polkit_auth_failure:
+            break
+
+
+async def _run_process(ws: WebSocket, cmd: list[str], loop) -> tuple[int, bool]:
     answer_queue: asyncio.Queue = asyncio.Queue()
 
     async def ws_reader():
@@ -468,17 +482,12 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
 
     reader_task = asyncio.create_task(ws_reader())
 
-    async def get_answer() -> dict:
-        msg = await answer_queue.get()
-        if msg is None:
-            raise WebSocketDisconnect()
-        return msg
-
     askpass_dir: str | None = None
     askpass_server = None
     master_fd: int | None = None
     child_pid: int | None = None
     _reader_thread_stop = threading.Event()
+    saw_polkit_auth = False
     try:
         env = os.environ.copy()
 
@@ -498,7 +507,9 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                     prompt_line = await reader.readline()
                     prompt = prompt_line.decode(errors="ignore").strip() or "Password required for sudo"
                     await ws.send_json({"type": "password_prompt", "text": prompt})
-                    reply = await get_answer()
+                    reply = await answer_queue.get()
+                    if reply is None:
+                        raise WebSocketDisconnect()
                     password = reply.get("answer") or ""
                     writer.write(password.encode() + b"\n")
                     await writer.drain()
@@ -637,6 +648,8 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                 await ws.send_json(progress_update)
 
             await ws.send_json({"type": "line", "text": clean})
+            if cmd and cmd[0] == "pkexec" and "Not authorized" in clean:
+                saw_polkit_auth = True
 
         buffer = b""
         while True:
@@ -653,11 +666,13 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                 buffer = b""
                 await ws.send_json({"type": "prompt", "text": prompt_text})
                 try:
-                    reply = await get_answer()
+                    reply = await answer_queue.get()
+                    if reply is None:
+                        raise WebSocketDisconnect()
                 except WebSocketDisconnect:
                     proc.kill()
                     await proc.wait()
-                    return
+                    return 1
                 answer = (reply.get("answer") or "").strip()
                 os.write(master_fd, (answer + "\n").encode())
                 await handle_line(prompt_text + answer)
@@ -676,12 +691,15 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
 
         rc = await proc.wait()
         await ws.send_json({"type": "done", "returncode": rc})
+        return rc, saw_polkit_auth
     except FileNotFoundError:
         await ws.send_json({"type": "line", "text": f"error: command not found: {cmd[0]}"})
         await ws.send_json({"type": "done", "returncode": 127})
+        return 127, False
     except Exception as exc:  # noqa: BLE001 — surface any failure to the UI
         await ws.send_json({"type": "line", "text": f"error: {exc}"})
         await ws.send_json({"type": "done", "returncode": 1})
+        return 1, False
     finally:
         _reader_thread_stop.set()
         if master_fd is not None:
