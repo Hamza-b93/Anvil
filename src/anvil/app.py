@@ -449,6 +449,7 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
 async def stream_process(ws: WebSocket, cmd: list[str]):
     global _active_transactions
     _active_transactions += 1
+    loop = asyncio.get_running_loop()
     await ws.send_json({"type": "start", "cmd": " ".join(cmd)})
 
     # A single dedicated reader serializes every inbound WebSocket message
@@ -554,11 +555,11 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
                     if not data:
                         break
                     asyncio.run_coroutine_threadsafe(
-                        output_queue.put(data), asyncio.get_event_loop()
+                        output_queue.put(data), loop
                     )
             finally:
                 asyncio.run_coroutine_threadsafe(
-                    output_queue.put(None), asyncio.get_event_loop()
+                    output_queue.put(None), loop
                 )
 
         pty_thread = threading.Thread(target=read_pty_master, daemon=True)
