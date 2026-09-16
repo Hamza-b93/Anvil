@@ -660,31 +660,28 @@ async def _run_process(ws: WebSocket, cmd: list[str], loop) -> tuple[int, bool]:
                     "action": action_type,
                 }
 
-            elif gen_match:
-                action_type = gen_match.group(1)
+            elif gen_match and (action := gen_match.group(1)) in ["installing", "upgrading", "removing", "reinstalling"]:
                 pkg_name = gen_match.group(2)
-                if action_type in ["installing", "upgrading", "removing", "reinstalling"]:
-                    if not current_install_pkg or current_install_pkg != pkg_name:
-                        current_install_pkg = pkg_name
-                        if total_to_install == 0:
-                            progress_update["install"] = {
-                                "current_num": "?",
-                                "total_num": "?",
-                                "package": pkg_name,
-                                "action": action_type,
-                                "estimated": True,
-                            }
-                        else:
-                            progress_update["install"] = {
-                                "current_num": "estimating...",
-                                "total_num": total_to_install,
-                                "package": pkg_name,
-                                "action": action_type,
-                                "estimated": True,
-                            }
-
-            if len(progress_update) > 1:
-                await ws.send_json(progress_update)
+                if not current_install_pkg or current_install_pkg != pkg_name:
+                    current_install_pkg = pkg_name
+                    if total_to_install == 0:
+                        progress_update["install"] = {
+                            "current_num": "?",
+                            "total_num": "?",
+                            "package": pkg_name,
+                            "action": action,
+                            "estimated": True,
+                        }
+                    else:
+                        progress_update["install"] = {
+                            "current_num": "estimating...",
+                            "total_num": total_to_install,
+                            "package": pkg_name,
+                            "action": action,
+                            "estimated": True,
+                        }
+                if len(progress_update) > 1:
+                    await ws.send_json(progress_update)
 
             await ws.send_json({"type": "line", "text": clean})
             if cmd and cmd[0] == "pkexec" and "Not authorized" in clean:

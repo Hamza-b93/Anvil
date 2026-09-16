@@ -10,6 +10,7 @@ reconstructed here beyond what's implied by the 0.5.0 entry below.
 
 ### Fixed
 - **pkexec subprocess failure on Python 3.14.** `pkexec` (and other commands launched via `preexec_fn`) raised `error: Exception occurred in preexec_fn` because Python 3.14 breaks `preexec_fn` callbacks in `asyncio.create_subprocess_exec`. Replaced with a manual `os.fork()` + `os.execvpe()` path: the child calls `os.setsid()` to create a new session before attempting `TIOCSCTTY` on the PTY slave, avoiding the permission error. Also added a `_ManualProc` wrapper class providing `kill()` and `async wait()` to replace the `asyncio.subprocess.Process` interface.
+- **Progress bar sync not updating in terminal drawer.** The websocket `progress` message was a new message type, but the drawer handler didn't process it, so download/install progress bars never appeared during `pkexec pacman -Sy` and related commands.
 
 ## [0.7.16] — 2026-09-16
 
@@ -26,6 +27,9 @@ reconstructed here beyond what's implied by the 0.5.0 entry below.
 ### Fixed
 - **yay subprocess deadlock when launching AUR updates.** `yay -Sua` (and other yay commands) would hang indefinitely with all threads blocked on `futex(FUTEX_WAIT_PRIVATE)` because `isatty()` returned false for pipe/socketpair file descriptors. Replaced pipe-based I/O with a pseudo-terminal (PTY): the child now sees a real terminal, yay's internal threading for parallel AUR queries and libalpm operations no longer deadlocks on un-signaled condition variables.
 - **ANSI escape codes leaking into UI output.** PTY output includes terminal control sequences (colors, cursor movement). These are now stripped before sending lines to the browser.
+
+### Fixed
+- **Progress bar sync not updating in terminal drawer.** The websocket `progress` message was a new message type, but the drawer handler didn't process it, so download/install progress bars never appeared during `pkexec pacman -Sy` and related commands.
 
 ### Changed
 - Subprocess I/O in `stream_process()`: `pty.openpty()` → `preexec_fn` wires slave fd to child's stdin/stdout/stderr; daemon thread reads master fd and feeds `asyncio.Queue`.
