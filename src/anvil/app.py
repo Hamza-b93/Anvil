@@ -471,6 +471,7 @@ async def stream_process(ws: WebSocket, cmd: list[str]):
 
 
 async def _run_process(ws: WebSocket, cmd: list[str], loop) -> tuple[int, bool]:
+    global _active_transactions
     answer_queue: asyncio.Queue = asyncio.Queue()
 
     async def ws_reader():
