@@ -6,6 +6,21 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions before 0.5.0 predate this changelog, so their history isn't
 reconstructed here beyond what's implied by the 0.5.0 entry below.
 
+## [0.7.17] — 2026-09-16
+
+### Fixed
+- **pkexec subprocess failure on Python 3.14.** `pkexec` (and other commands launched via `preexec_fn`) raised `error: Exception occurred in preexec_fn` because Python 3.14 breaks `preexec_fn` callbacks in `asyncio.create_subprocess_exec`. Replaced with a manual `os.fork()` + `os.execvpe()` path: the child calls `os.setsid()` to create a new session before attempting `TIOCSCTTY` on the PTY slave, avoiding the permission error. Also added a `_ManualProc` wrapper class providing `kill()` and `async wait()` to replace the `asyncio.subprocess.Process` interface.
+
+## [0.7.16] — 2026-09-16
+
+### Fixed
+- **pkexec auth race failure.** `pkexec pacman -Sy` could fail with a polkit authentication race under load; added a retry on polkit auth failure.
+
+## [0.7.15] — 2026-09-16
+
+### Fixed
+- **asyncio event loop error in Python 3.14+.** `asyncio.Queue.put` is now a coroutine; fixed by scheduling `put()` on the captured event loop instead of calling `asyncio.get_event_loop()` from a thread.
+
 ## [0.7.14] — 2026-09-05
 
 ### Fixed
