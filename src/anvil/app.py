@@ -527,30 +527,68 @@ async def _run_process(ws: WebSocket, cmd: list[str], loop) -> tuple[int, bool]:
         # interactive TUI programs like yay, which can deadlock internally
         # when isatty() returns false (their threading model expects terminal
         # semantics and condition-variable signaling that pipes don't provide).
+        #
+        # We use os.fork() + os.execvpe() directly instead of
+        # asyncio.create_subprocess_exec with preexec_fn, because Python 3.14
+        # has issues running preexec_fn callbacks (signal handler / GIL state
+        # in the fork child). Manual fork lets us set up the PTY slave as the
+        # controlling terminal cleanly before exec.
         master_fd, slave_fd = pty.openpty()
 
         winsize = struct.pack('HHHH', 24, 80, 0, 0)
         fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
 
-        def preexec():
-            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-            os.dup2(slave_fd, 0)
-            os.dup2(slave_fd, 1)
-            os.dup2(slave_fd, 2)
-            if slave_fd > 2:
-                os.close(slave_fd)
+        try:
+            pid = os.fork()
+            if pid == 0:
+                # Child process — create a new session, set up PTY slave as
+                # controlling terminal, then exec the requested command.
+                try:
+                    os.setsid()
+                    # TIOCSCTTY requires the process to not already have a
+                    # controlling terminal, so we create a new session first.
+                    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+                    os.dup2(slave_fd, 0)
+                    os.dup2(slave_fd, 1)
+                    os.dup2(slave_fd, 2)
+                    if slave_fd > 2:
+                        os.close(slave_fd)
+                    os.close(master_fd)
+                    os.execvpe(cmd[0], cmd, env)
+                except Exception:
+                    os._exit(1)
+                os._exit(1)
+            else:
+                child_pid = pid
+        finally:
+            os.close(slave_fd)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            env=env,
-            start_new_session=True,
-            preexec_fn=preexec,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        os.close(slave_fd)
-        child_pid = proc.pid
+        # Minimal process wrapper so the rest of stream_process can call
+        # proc.kill() and await proc.wait() without depending on
+        # asyncio.create_subprocess_exec (whose preexec_fn is unreliable
+        # under Python 3.14).
+        class _ManualProc:
+            __slots__ = ("pid",)
+
+            def __init__(self, pid: int):
+                self.pid = pid
+
+            def kill(self) -> None:
+                try:
+                    os.kill(self.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+            async def wait(self) -> int:
+                def _wait() -> int:
+                    pid_result, status = os.waitpid(self.pid, 0)
+                    if pid_result == self.pid:
+                        return os.WEXITSTATUS(status) if os.WIFEXITED(status) else -signal.SIGKILL
+                    return -1
+
+                return await asyncio.get_running_loop().run_in_executor(None, _wait)
+
+        proc = _ManualProc(child_pid)
 
         # A background thread reads the PTY master fd and pushes chunks into
         # an asyncio queue. This avoids blocking the event loop on reads of a
